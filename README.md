@@ -1,6 +1,6 @@
 # Farm Diary
 
-A searchable, mobile-first farm logbook for Driffield Farming Ltd — production, herd flags, weather, grazing, and k-line management, all in one tap-to-enter tool. Separate from Dairy Assistant, which handles live herd operations; Farm Diary is the historical record you scroll back through.
+A searchable, mobile-first farm logbook — production, herd flags, weather, grazing, and k-line management, all in one tap-to-enter tool. Separate from Dairy Assistant, which handles live herd operations; Farm Diary is the historical record you scroll back through.
 
 Built as a single self-contained HTML file. No backend, no build step, no account — all data is stored locally in your phone's browser via `localStorage`.
 
