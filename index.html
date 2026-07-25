@@ -183,6 +183,10 @@
         <div class="btn-group" id="windStrGroup" style="margin-bottom:12px;">
           <div class="toggle-btn" data-val="Light">Light</div><div class="toggle-btn" data-val="Medium">Medium</div><div class="toggle-btn" data-val="Strong">Strong</div>
         </div>
+        <div class="field-row">
+          <div class="field"><label>High temp (°C)</label><input type="number" id="tempHigh" inputmode="decimal" step="0.1"></div>
+          <div class="field"><label>Low temp (°C)</label><input type="number" id="tempLow" inputmode="decimal" step="0.1"></div>
+        </div>
         <div class="field"><label>Total rainfall (mm)</label><input type="number" id="rainfall" inputmode="decimal" step="0.1"></div>
       </div>
     </div>
@@ -213,6 +217,10 @@
   </div>
 
   <div class="view" id="klineView">
+    <div class="date-picker-bar">
+      <input type="date" id="klineDatePicker">
+      <button class="today-jump" id="klineTodayJumpBtn">Today</button>
+    </div>
     <div class="pod-card">
       <h3 style="font-size:16px; margin-bottom:10px;">Pod 1</h3>
       <div class="pod-counter" id="pod1Counter"><div class="count-num">–</div><div class="count-label">days on current paddock</div><div class="count-paddock">No entries yet</div></div>
@@ -560,7 +568,7 @@ function findPreviousHa(mobId, fromDateKey, maxLookback){
   return null;
 }
 function resetFormBlank(){
-  ['milkLitres','milkSolidsTotal','sccField','herd1','herd2','herd3','oadField','penoField','rainfall','notesField'].forEach(id => document.getElementById(id).value = '');
+  ['milkLitres','milkSolidsTotal','sccField','herd1','herd2','herd3','oadField','penoField','rainfall','tempHigh','tempLow','notesField'].forEach(id => document.getElementById(id).value = '');
   document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active-b','active-g'));
   selectedWindDir = null; selectedWindStr = null;
   MAIN_MOBS.forEach(m => { mobPaddocks[m.id] = []; document.querySelector(`[data-ha="${m.id}"]`).value=''; setPaddockGridStateMain(m.id); });
@@ -596,6 +604,8 @@ function loadDateIntoForm(){
     document.getElementById('oadField').value = e.oad ?? '';
     document.getElementById('penoField').value = e.peno ?? '';
     document.getElementById('rainfall').value = e.rainfall ?? '';
+    document.getElementById('tempHigh').value = e.tempHigh ?? '';
+    document.getElementById('tempLow').value = e.tempLow ?? '';
     document.getElementById('notesField').value = e.notes ?? '';
     if(e.windDir){ selectedWindDir = e.windDir; document.querySelectorAll('#windDirGroup .toggle-btn').forEach(b => { if(b.dataset.val === e.windDir) b.classList.add('active-b'); }); }
     if(e.windStr){ selectedWindStr = e.windStr; document.querySelectorAll('#windStrGroup .toggle-btn').forEach(b => { if(b.dataset.val === e.windStr) b.classList.add('active-b'); }); }
@@ -672,6 +682,8 @@ document.getElementById('saveTodayBtn').addEventListener('click', () => {
     colostrumCount: stripState.colostrum.count ?? null,
     windDir: selectedWindDir, windStr: selectedWindStr,
     rainfall: parseFloat(document.getElementById('rainfall').value) || null,
+    tempHigh: parseFloat(document.getElementById('tempHigh').value) || null,
+    tempLow: parseFloat(document.getElementById('tempLow').value) || null,
     mobAreas: mobAreasSnapshot,
     mobPaddocks: mobPaddocksSnapshot,
     stripGrazers: stripSnapshot,
@@ -742,6 +754,7 @@ function renderTrends(){
 }
 
 // ---------- K-LINE ----------
+let selectedKlineDate = todayKeyReal();
 function buildPaddockGrid(containerId, paddockList, podKey){
   const grid = document.getElementById(containerId); grid.innerHTML = '';
   paddockList.slice().sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true})).forEach(p => {
@@ -762,34 +775,76 @@ document.querySelectorAll('#pod1ActionGroup .toggle-btn').forEach(btn => btn.add
 document.querySelectorAll('#pod3ActionGroup .toggle-btn').forEach(btn => btn.addEventListener('click', () => {
   document.querySelectorAll('#pod3ActionGroup .toggle-btn').forEach(b => b.classList.remove('active-g')); btn.classList.add('active-g'); pod3Action = btn.dataset.val;
 }));
-function saveKlineEntry(podKey, paddock, action){
+
+document.getElementById('klineDatePicker').value = selectedKlineDate;
+document.getElementById('klineDatePicker').addEventListener('change', (e) => { selectedKlineDate = e.target.value; loadKlineDateIntoForm(); });
+document.getElementById('klineTodayJumpBtn').addEventListener('click', () => {
+  selectedKlineDate = todayKeyReal(); document.getElementById('klineDatePicker').value = selectedKlineDate; loadKlineDateIntoForm();
+});
+
+// Counter is always recomputed from history (walking back through whatever entries
+// exist, skipping gaps) rather than trusting a stored running total — this way,
+// backdating a missed day recalculates everything after it correctly.
+function computeKlineTally(podKey, dateKey){
+  const hist = kline[podKey].history;
+  const entry = hist[dateKey];
+  if(!entry) return null;
+  const keysBefore = Object.keys(hist).filter(k => k < dateKey).sort().reverse();
+  let count = 1;
+  for(const k of keysBefore){ if(hist[k].paddock === entry.paddock) count++; else break; }
+  return { paddock: entry.paddock, action: entry.action, counter: count };
+}
+function mostRecentKlineDate(podKey){
+  const keys = Object.keys(kline[podKey].history).sort();
+  return keys.length ? keys[keys.length-1] : null;
+}
+function loadKlineDateIntoForm(){
+  ['pod1','pod3'].forEach(podKey => {
+    const grid = document.getElementById(podKey + 'PaddockGrid');
+    Array.from(grid.children).forEach(b => b.classList.remove('active-b'));
+    document.querySelectorAll('#' + podKey + 'ActionGroup .toggle-btn').forEach(b => b.classList.remove('active-g'));
+    if(podKey === 'pod1'){ pod1Selected = null; pod1Action = null; } else { pod3Selected = null; pod3Action = null; }
+    const entry = kline[podKey].history[selectedKlineDate];
+    if(entry){
+      Array.from(grid.children).forEach(b => { if(String(b.textContent) === String(entry.paddock)){ b.classList.add('active-b'); if(podKey==='pod1') pod1Selected = entry.paddock; else pod3Selected = entry.paddock; } });
+      document.querySelectorAll('#' + podKey + 'ActionGroup .toggle-btn').forEach(b => { if(b.dataset.val === entry.action){ b.classList.add('active-g'); if(podKey==='pod1') pod1Action = entry.action; else pod3Action = entry.action; } });
+    }
+    const saveBtn = document.getElementById(podKey + 'SaveBtn');
+    saveBtn.textContent = 'Log ' + (podKey === 'pod1' ? 'Pod 1' : 'Pod 3') + ' for ' + formatDateNice(selectedKlineDate);
+  });
+}
+function saveKlineEntry(podKey, dateKey, paddock, action){
   if(!paddock || !action) return false;
-  const pod = kline[podKey];
-  if(pod.lastPaddock !== null && pod.lastPaddock === paddock) pod.counter += 1; else pod.counter = 1;
-  pod.lastPaddock = paddock;
-  pod.history[todayKeyReal()] = { paddock, action, counter: pod.counter };
+  kline[podKey].history[dateKey] = { paddock, action };
   saveKline(kline);
   return true;
 }
 document.getElementById('pod1SaveBtn').addEventListener('click', () => {
-  const ok = saveKlineEntry('pod1', pod1Selected, pod1Action);
-  const status = document.getElementById('pod1Status'); status.textContent = ok ? 'Logged' : 'Select a paddock and an action first';
+  const ok = saveKlineEntry('pod1', selectedKlineDate, pod1Selected, pod1Action);
+  const status = document.getElementById('pod1Status'); status.textContent = ok ? 'Logged for ' + formatDateNice(selectedKlineDate) : 'Select a paddock and an action first';
   setTimeout(() => { status.textContent = ''; }, 2500); renderKline();
 });
 document.getElementById('pod3SaveBtn').addEventListener('click', () => {
-  const ok = saveKlineEntry('pod3', pod3Selected, pod3Action);
-  const status = document.getElementById('pod3Status'); status.textContent = ok ? 'Logged' : 'Select a paddock and an action first';
+  const ok = saveKlineEntry('pod3', selectedKlineDate, pod3Selected, pod3Action);
+  const status = document.getElementById('pod3Status'); status.textContent = ok ? 'Logged for ' + formatDateNice(selectedKlineDate) : 'Select a paddock and an action first';
   setTimeout(() => { status.textContent = ''; }, 2500); renderKline();
 });
 function renderKline(){
   kline = loadKline();
+  loadKlineDateIntoForm();
   ['pod1','pod3'].forEach(podKey => {
-    const pod = kline[podKey]; const counterEl = document.getElementById(podKey + 'Counter');
-    if(pod.lastPaddock !== null){ counterEl.querySelector('.count-num').textContent = pod.counter; counterEl.querySelector('.count-paddock').textContent = 'Paddock ' + pod.lastPaddock; }
-    else { counterEl.querySelector('.count-num').textContent = '–'; counterEl.querySelector('.count-paddock').textContent = 'No entries yet'; }
+    const counterEl = document.getElementById(podKey + 'Counter');
+    const latestKey = mostRecentKlineDate(podKey);
+    if(latestKey){
+      const tally = computeKlineTally(podKey, latestKey);
+      counterEl.querySelector('.count-num').textContent = tally.counter;
+      counterEl.querySelector('.count-paddock').textContent = 'Paddock ' + tally.paddock + ' (as of ' + formatDateNice(latestKey) + ')';
+    } else {
+      counterEl.querySelector('.count-num').textContent = '–'; counterEl.querySelector('.count-paddock').textContent = 'No entries yet';
+    }
     const histEl = document.getElementById(podKey + 'History');
-    const dates = Object.keys(pod.history).sort().reverse().slice(0,5);
-    histEl.innerHTML = dates.map(d => { const h = pod.history[d]; return `<div class="kline-history-item"><span>${formatDateNice(d)}</span><span>Paddock ${h.paddock} · ${h.action} · day ${h.counter}</span></div>`; }).join('');
+    const dates = Object.keys(kline[podKey].history).sort().reverse().slice(0,5);
+    histEl.innerHTML = dates.map(d => { const t = computeKlineTally(podKey, d); return `<div class="kline-history-item"><span>${formatDateNice(d)}</span><span>Paddock ${t.paddock} · ${t.action} · day ${t.counter}</span></div>`; }).join('');
   });
 }
 
@@ -871,6 +926,9 @@ function openModal(key){
   if(e.oad) rows.push(['OAD', e.oad]); if(e.peno) rows.push(['PENO', e.peno]);
   if(e.newMomsCount) rows.push(['New Moms count', e.newMomsCount]); if(e.colostrumCount) rows.push(['Colostrum count', e.colostrumCount]);
   if(e.windDir || e.windStr) rows.push(['Wind', [e.windDir, e.windStr].filter(Boolean).join(' / ')]);
+  if(e.tempHigh !== null && e.tempHigh !== undefined || e.tempLow !== null && e.tempLow !== undefined){
+    rows.push(['Temp (high / low)', (e.tempHigh ?? '–') + '° / ' + (e.tempLow ?? '–') + '°']);
+  }
   if(e.rainfall !== null && e.rainfall !== undefined) rows.push(['Rainfall', e.rainfall + ' mm']);
 
   let html = '<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:14px;">';
@@ -940,7 +998,7 @@ document.getElementById('exportBtn').addEventListener('click', () => {
   }
   if(exportDataset === 'all'){
     payload.weatherNotes = Object.keys(entries).filter(inRange).sort().map(k => {
-      const e = entries[k]; return { date:k, windDir:e.windDir, windStr:e.windStr, rainfall:e.rainfall, notes:e.notes };
+      const e = entries[k]; return { date:k, windDir:e.windDir, windStr:e.windStr, tempHigh:e.tempHigh, tempLow:e.tempLow, rainfall:e.rainfall, notes:e.notes };
     });
   }
   document.getElementById('exportOutput').value = 'FARM_DIARY_EXPORT:' + JSON.stringify(payload);
