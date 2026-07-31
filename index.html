@@ -16,6 +16,7 @@
     --paper:#EDEAE0; --card:#FBFAF6; --ink:#2B2A25; --ink-soft:#6B6858;
     --green:#3F5A3F; --green-soft:#DCE3D6; --blue:#3D6B85; --blue-soft:#D9E4E8;
     --rust:#B0472B; --rust-soft:#F0DAD2; --amber:#96702A; --amber-soft:#EBE0C8; --line:#DAD6C8;
+    --tabbar-h: 45px;
   }
   *{box-sizing:border-box;}
   body{ margin:0; background:var(--paper); color:var(--ink); font-family:'IBM Plex Sans',sans-serif; -webkit-tap-highlight-color:transparent; }
@@ -41,9 +42,15 @@
   }
   .field input:focus{outline:2px solid var(--green); outline-offset:1px;}
   .readonly-out{ font-family:'IBM Plex Mono',monospace; font-size:15px; color:var(--green); padding:11px 10px; background:#F5F3EC; border-radius:8px; border:1px solid var(--line); }
-  .date-picker-bar{ display:flex; align-items:center; gap:10px; margin-bottom:14px; }
-  .date-picker-bar input[type=date]{ flex:1; }
-  .today-jump{ padding:11px 12px; border:1px solid var(--green); color:var(--green); border-radius:8px; background:#fff; font-size:13px; font-weight:600; cursor:pointer; }
+
+  .date-nav-bar{ position:sticky; top:var(--tabbar-h); z-index:4; background:var(--paper); display:flex; align-items:center; gap:8px; padding:10px 16px 14px; margin:0 -16px 14px; border-bottom:1px solid var(--line); }
+  .date-arrow{ width:38px; height:38px; flex-shrink:0; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:18px; color:var(--ink); cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  .date-arrow:active{ background:var(--green-soft); }
+  .date-label-wrap{ position:relative; flex:1; }
+  .date-nav-center{ text-align:center; font-family:'IBM Plex Mono',monospace; font-size:13px; font-weight:600; padding:11px 4px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  .date-input-overlay{ position:absolute; inset:0; opacity:0; border:none; padding:0; width:100%; height:100%; }
+  .today-jump{ padding:0 12px; height:38px; flex-shrink:0; border:1px solid var(--green); color:var(--green); border-radius:8px; background:#fff; font-size:13px; font-weight:600; cursor:pointer; }
+
   .stat-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   .stat-box{ background:#F5F3EC; border:1px solid var(--line); border-radius:8px; padding:10px; }
   .stat-box .stat-label{ font-size:11px; color:var(--ink-soft); font-family:'IBM Plex Mono',monospace; margin-bottom:4px; }
@@ -95,7 +102,6 @@
   .paddock-btn{ padding:8px 2px; text-align:center; border:1px solid var(--line); border-radius:6px; background:#fff; font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink-soft); cursor:pointer; }
   .paddock-btn.active-g{ background:var(--green); border-color:var(--green); color:#fff; }
   .paddock-btn.active-b{ background:var(--blue); border-color:var(--blue); color:#fff; }
-  .mini-ha{ width:80px; flex-shrink:0; }
   .calving-toggle{ display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border:1px dashed var(--line); border-radius:8px; cursor:pointer; font-size:13px; color:var(--ink-soft); margin-top:6px; margin-bottom:8px; }
   .calving-section{ display:none; } .calving-section.open{ display:block; }
   .strip-tally{ font-size:12px; color:var(--green); font-family:'IBM Plex Mono',monospace; margin-top:8px; background:var(--green-soft); padding:6px 8px; border-radius:6px; }
@@ -127,14 +133,25 @@
   </div>
 
   <div class="view active" id="todayView">
-    <div class="date-picker-bar">
-      <input type="date" id="entryDatePicker">
+    <div class="date-nav-bar">
+      <button class="date-arrow" id="entryPrevBtn">‹</button>
+      <div class="date-label-wrap">
+        <div class="date-nav-center" id="entryDateLabel">–</div>
+        <input type="date" id="entryDatePicker" class="date-input-overlay">
+      </div>
+      <button class="date-arrow" id="entryNextBtn">›</button>
       <button class="today-jump" id="todayJumpBtn">Today</button>
     </div>
 
     <div class="card" data-card="production">
       <div class="card-head"><span class="dot g"></span><h2>Production</h2><span class="chevron">▾</span></div>
       <div class="card-body">
+        <div class="field-row" style="align-items:center; margin-bottom:6px;">
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink-soft); cursor:pointer; margin:0;">
+            <input type="checkbox" id="skipCollectionField" style="width:auto;">
+            No collection today (skip day)
+          </label>
+        </div>
         <div class="field-row">
           <div class="field"><label>Milk collected (L)</label><input type="number" id="milkLitres" inputmode="decimal"></div>
           <div class="field"><label>Milk solids total (kg)</label><input type="number" id="milkSolidsTotal" inputmode="decimal" step="0.1"></div>
@@ -144,11 +161,6 @@
           <div class="field"><label>Kg solids / cow</label><div class="readonly-out" id="solidsPerCowOut">–</div></div>
         </div>
       </div>
-    </div>
-
-    <div class="card" data-card="trends">
-      <div class="card-head"><span class="dot a"></span><h2>Trends</h2><span class="chevron">▾</span></div>
-      <div class="card-body"><div class="stat-grid" id="trendsGrid"></div></div>
     </div>
 
     <div class="card" data-card="herdsflags">
@@ -167,6 +179,51 @@
           <div class="field"></div>
         </div>
       </div>
+    </div>
+
+    <div class="card" data-card="grazing">
+      <div class="card-head"><span class="dot a"></span><h2>Grazing</h2><span class="chevron">▾</span></div>
+      <div class="card-body">
+        <div class="stat-grid" style="margin-bottom:14px;">
+          <div class="stat-box"><div class="stat-label">TOTAL AREA GRAZED</div><div class="stat-val" id="totalAreaOut">0.0 ha</div></div>
+          <div class="stat-box"><div class="stat-label">ROUND LENGTH</div><div class="stat-val" id="roundLengthOut">–</div></div>
+        </div>
+        <label style="font-size:12px; color:var(--ink-soft); display:block; margin-bottom:8px;">Main herd paddocks &amp; area (up to 2 paddocks each)</label>
+        <div id="mainMobRows"></div>
+        <label style="font-size:12px; color:var(--ink-soft); display:block; margin:12px 0 8px;">PENO &amp; OAD (strip grazing)</label>
+        <div id="stripMainRows"></div>
+        <div class="calving-toggle" id="calvingToggle">
+          <span>Calving mobs (New Moms &amp; Colostrum)</span>
+          <span id="calvingChevron">▾</span>
+        </div>
+        <div class="calving-section" id="calvingSection"><div id="calvingStripRows"></div></div>
+
+        <div class="calving-toggle" id="roundToggle" style="margin-top:14px;">
+          <span>Round 1 tracker &amp; summary</span>
+          <span id="roundChevron">▾</span>
+        </div>
+        <div class="calving-section" id="roundSection">
+          <div class="field"><label>Round 1 start date</label><input type="date" id="roundStartDate"></div>
+          <div class="field"><label>Spring Rotation Planner target today (ha)</label><input type="number" id="srpTarget" step="0.01"></div>
+          <div class="stat-grid" style="margin-top:10px;">
+            <div class="stat-box"><div class="stat-label">USED THIS ROUND</div><div class="stat-val" id="roundUsedOut">–</div></div>
+            <div class="stat-box"><div class="stat-label">SRP TOTAL</div><div class="stat-val" id="roundSrpOut">–</div></div>
+          </div>
+          <button class="save-btn" id="bossCopyBtn" style="width:100%; margin-top:12px;">Copy summary</button>
+          <textarea class="export-output" id="bossOutput" readonly style="min-height:100px;"></textarea>
+          <div class="status-msg" id="bossStatus"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" data-card="notes">
+      <div class="card-head"><span class="dot r"></span><h2>Notes</h2><span class="chevron">▾</span></div>
+      <div class="card-body"><textarea id="notesField" placeholder="Anything worth remembering — first cut results, contractor visit, calving..."></textarea></div>
+    </div>
+
+    <div class="card" data-card="trends">
+      <div class="card-head"><span class="dot a"></span><h2>Trends</h2><span class="chevron">▾</span></div>
+      <div class="card-body"><div class="stat-grid" id="trendsGrid"></div></div>
     </div>
 
     <div class="card" data-card="weather">
@@ -190,35 +247,16 @@
         <div class="field"><label>Total rainfall (mm)</label><input type="number" id="rainfall" inputmode="decimal" step="0.1"></div>
       </div>
     </div>
-
-    <div class="card" data-card="grazing">
-      <div class="card-head"><span class="dot a"></span><h2>Grazing</h2><span class="chevron">▾</span></div>
-      <div class="card-body">
-        <div class="stat-grid" style="margin-bottom:14px;">
-          <div class="stat-box"><div class="stat-label">TOTAL AREA GRAZED</div><div class="stat-val" id="totalAreaOut">0.0 ha</div></div>
-          <div class="stat-box"><div class="stat-label">ROUND LENGTH</div><div class="stat-val" id="roundLengthOut">–</div></div>
-        </div>
-        <label style="font-size:12px; color:var(--ink-soft); display:block; margin-bottom:8px;">Main herd paddocks &amp; area</label>
-        <div id="mainMobRows"></div>
-        <label style="font-size:12px; color:var(--ink-soft); display:block; margin:12px 0 8px;">PENO &amp; OAD (strip grazing)</label>
-        <div id="stripMainRows"></div>
-        <div class="calving-toggle" id="calvingToggle">
-          <span>Calving mobs (New Moms &amp; Colostrum)</span>
-          <span id="calvingChevron">▾</span>
-        </div>
-        <div class="calving-section" id="calvingSection"><div id="calvingStripRows"></div></div>
-      </div>
-    </div>
-
-    <div class="card" data-card="notes">
-      <div class="card-head"><span class="dot r"></span><h2>Notes</h2><span class="chevron">▾</span></div>
-      <div class="card-body"><textarea id="notesField" placeholder="Anything worth remembering — first cut results, contractor visit, calving..."></textarea></div>
-    </div>
   </div>
 
   <div class="view" id="klineView">
-    <div class="date-picker-bar">
-      <input type="date" id="klineDatePicker">
+    <div class="date-nav-bar">
+      <button class="date-arrow" id="klinePrevBtn">‹</button>
+      <div class="date-label-wrap">
+        <div class="date-nav-center" id="klineDateLabel">–</div>
+        <input type="date" id="klineDatePicker" class="date-input-overlay">
+      </div>
+      <button class="date-arrow" id="klineNextBtn">›</button>
       <button class="today-jump" id="klineTodayJumpBtn">Today</button>
     </div>
     <div class="pod-card">
@@ -256,7 +294,7 @@
     <div id="entryList"></div>
 
     <div class="card" data-card="export" style="margin-top:20px;">
-      <div class="card-head collapsed-init"><span class="dot b"></span><h2>Export data</h2><span class="chevron">▾</span></div>
+      <div class="card-head"><span class="dot b"></span><h2>Export data</h2><span class="chevron">▾</span></div>
       <div class="card-body">
         <div class="export-row">
           <div class="field"><label>From</label><input type="date" id="exportFrom"></div>
@@ -295,7 +333,9 @@
 <script>
 const STORAGE_KEY = 'farmDiaryEntries';
 const KLINE_KEY = 'farmDiaryKLine';
+const ROUND_START_KEY = 'farmDiaryRoundStart';
 const TOTAL_FARM_HA = 369;
+const MAIN_SLOT_COUNT = 2;
 
 const PADDOCKS = [1,2,3,4,5,6,7,14,15,16,17,18,19,20,21,22,23,24,25,'25a',26,'26a',27,'27a','27b','28a','28b',29,30,31,32,33,35,36,37,38,39,40,41,42,43,'44a','44b',45,46,47,48,49,50,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67];
 const POD1_PADDOCKS = [4,5,14,15,16,17];
@@ -309,8 +349,8 @@ const ALL_STRIP_MOBS = STRIP_MAIN_MOBS.concat(STRIP_CALVING_MOBS);
 function loadEntries(){ try{ const raw = localStorage.getItem(STORAGE_KEY); return raw ? JSON.parse(raw) : {}; }catch(e){ return {}; } }
 function saveEntries(entries){ localStorage.setItem(STORAGE_KEY, JSON.stringify(entries)); }
 function loadKline(){
-  try{ const raw = localStorage.getItem(KLINE_KEY); return raw ? JSON.parse(raw) : { pod1:{lastPaddock:null, counter:0, history:{}}, pod3:{lastPaddock:null, counter:0, history:{}} }; }
-  catch(e){ return { pod1:{lastPaddock:null, counter:0, history:{}}, pod3:{lastPaddock:null, counter:0, history:{}} }; }
+  try{ const raw = localStorage.getItem(KLINE_KEY); return raw ? JSON.parse(raw) : { pod1:{history:{}}, pod3:{history:{}} }; }
+  catch(e){ return { pod1:{history:{}}, pod3:{history:{}} }; }
 }
 function saveKline(k){ localStorage.setItem(KLINE_KEY, JSON.stringify(k)); }
 
@@ -332,10 +372,13 @@ function pctChange(cur, prev){
   return ((cur-prev)/prev)*100;
 }
 
+document.documentElement.style.setProperty('--tabbar-h', document.querySelector('.tabbar').getBoundingClientRect().height + 'px');
+
 let entries = loadEntries();
 let kline = loadKline();
 let selectedWindDir = null, selectedWindStr = null;
-let mobPaddocks = {}; MAIN_MOBS.forEach(m => mobPaddocks[m.id] = []);
+let mobSlotPaddock = {}, mobSlotHa = {};
+MAIN_MOBS.forEach(m => { mobSlotPaddock[m.id] = new Array(MAIN_SLOT_COUNT).fill(null); mobSlotHa[m.id] = new Array(MAIN_SLOT_COUNT).fill(null); });
 let stripState = {}; ALL_STRIP_MOBS.forEach(m => stripState[m.id] = { paddock:null, plannedArea:null, count:null, pendingActual:null });
 let modalCurrentKey = null;
 let pod1Action = null, pod3Action = null, pod1Selected = null, pod3Selected = null;
@@ -361,11 +404,12 @@ function switchTab(tab){
 document.querySelectorAll('.card-head').forEach(head => head.addEventListener('click', () => head.closest('.card').classList.toggle('collapsed')));
 document.querySelector('[data-card="export"] .card-head').classList.add('collapsed');
 
-// ---------- DATE PICKER ----------
-document.getElementById('entryDatePicker').addEventListener('change', (e) => { selectedDateKey = e.target.value; loadDateIntoForm(); });
-document.getElementById('todayJumpBtn').addEventListener('click', () => {
-  selectedDateKey = todayKeyReal(); document.getElementById('entryDatePicker').value = selectedDateKey; loadDateIntoForm();
-});
+// ---------- DATE NAV (Today) ----------
+function setEntryDate(newKey){ selectedDateKey = newKey; document.getElementById('entryDatePicker').value = selectedDateKey; loadDateIntoForm(); }
+document.getElementById('entryPrevBtn').addEventListener('click', () => setEntryDate(keyOffsetFrom(selectedDateKey, -1)));
+document.getElementById('entryNextBtn').addEventListener('click', () => setEntryDate(keyOffsetFrom(selectedDateKey, 1)));
+document.getElementById('entryDatePicker').addEventListener('change', (e) => setEntryDate(e.target.value));
+document.getElementById('todayJumpBtn').addEventListener('click', () => setEntryDate(todayKeyReal()));
 
 // ---------- WEATHER TOGGLES ----------
 document.querySelectorAll('#windDirGroup .toggle-btn').forEach(btn => btn.addEventListener('click', () => {
@@ -389,42 +433,73 @@ function updateSolidsPerCow(){
   document.getElementById('solidsPerCowOut').textContent = (total > 0 && cows > 0) ? (total/cows).toFixed(2) + ' kg' : '–';
 }
 ['milkSolidsTotal','herd1','herd2','herd3','oadField'].forEach(id => document.getElementById(id).addEventListener('input', () => { updateSolidsPerCow(); updateGrazingTotals(); }));
+document.getElementById('skipCollectionField').addEventListener('change', (e) => {
+  const milkL = document.getElementById('milkLitres'), milkS = document.getElementById('milkSolidsTotal');
+  if(e.target.checked){ milkL.value=''; milkS.value=''; milkL.disabled=true; milkS.disabled=true; }
+  else { milkL.disabled=false; milkS.disabled=false; }
+  updateSolidsPerCow();
+});
 
-// ---------- MAIN MOB ROWS ----------
+// ---------- MAIN MOB ROWS: two paddock+area slots each ----------
 function buildMainMobRow(mob){
   const row = document.createElement('div'); row.className = 'mob-row'; row.dataset.mob = mob.id;
+  let slotsHtml = '';
+  for(let s=0; s<MAIN_SLOT_COUNT; s++){
+    slotsHtml += `
+      <div class="mob-slot" ${s>0 ? 'style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--line);"' : ''}>
+        <label style="font-size:11px; color:var(--ink-soft); display:block; margin-bottom:6px;">Paddock ${s+1}${s>0?' (optional)':''}</label>
+        <div class="paddock-grid" data-mslot-grid="${mob.id}-${s}" style="margin-bottom:8px;"></div>
+        <div class="field"><label>Area (ha)</label><input type="number" data-mslot-ha="${mob.id}-${s}" step="0.1"></div>
+      </div>`;
+  }
   row.innerHTML = `
     <div class="mob-row-head">
       <span class="mob-name">${mob.label}</span>
-      <div style="display:flex; align-items:center; gap:8px;">
-        <input type="number" class="mini-ha" placeholder="ha" data-ha="${mob.id}" step="0.1" onclick="event.stopPropagation()">
-        <span class="mob-chips" data-chips="${mob.id}">No paddocks</span>
-      </div>
+      <span class="mob-chips" data-chips="${mob.id}">No paddocks</span>
     </div>
-    <div class="mob-row-body"><div class="paddock-grid" data-grid="${mob.id}"></div></div>`;
-  row.querySelector('.mob-row-head').addEventListener('click', (e) => { if(e.target.tagName !== 'INPUT') row.classList.toggle('open'); });
-  const grid = row.querySelector(`[data-grid="${mob.id}"]`);
-  PADDOCKS.forEach(p => {
-    const btn = document.createElement('div'); btn.className = 'paddock-btn'; btn.textContent = p;
-    btn.addEventListener('click', () => {
-      const arr = mobPaddocks[mob.id]; const idx = arr.indexOf(p);
-      if(idx >= 0){ arr.splice(idx,1); btn.classList.remove('active-g'); } else { arr.push(p); btn.classList.add('active-g'); }
-      updateMobChips(mob.id);
+    <div class="mob-row-body">${slotsHtml}</div>`;
+  row.querySelector('.mob-row-head').addEventListener('click', () => row.classList.toggle('open'));
+  for(let s=0; s<MAIN_SLOT_COUNT; s++){
+    const grid = row.querySelector(`[data-mslot-grid="${mob.id}-${s}"]`);
+    PADDOCKS.forEach(p => {
+      const btn = document.createElement('div'); btn.className = 'paddock-btn'; btn.textContent = p;
+      btn.addEventListener('click', () => {
+        Array.from(grid.children).forEach(b => b.classList.remove('active-g'));
+        btn.classList.add('active-g');
+        mobSlotPaddock[mob.id][s] = p;
+        updateMobChips(mob.id); updateGrazingTotals();
+      });
+      grid.appendChild(btn);
     });
-    grid.appendChild(btn);
-  });
-  row.querySelector(`[data-ha="${mob.id}"]`).addEventListener('input', updateGrazingTotals);
+    row.querySelector(`[data-mslot-ha="${mob.id}-${s}"]`).addEventListener('input', (e) => {
+      mobSlotHa[mob.id][s] = parseFloat(e.target.value) || null;
+      updateMobChips(mob.id); updateGrazingTotals();
+    });
+  }
   return row;
 }
 function updateMobChips(mobId){
   const chipsEl = document.querySelector(`[data-chips="${mobId}"]`);
-  const arr = mobPaddocks[mobId];
-  chipsEl.textContent = arr.length ? arr.slice().sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true})).join(', ') : 'No paddocks';
+  const pads = mobSlotPaddock[mobId], has = mobSlotHa[mobId];
+  const parts = [];
+  for(let s=0; s<MAIN_SLOT_COUNT; s++){ if(pads[s] !== null && pads[s] !== undefined) parts.push('P' + pads[s] + (has[s] ? ' (' + has[s] + 'ha)' : '')); }
+  chipsEl.textContent = parts.length ? parts.join(', ') : 'No paddocks';
+}
+function setMainSlotGridState(mobId){
+  for(let s=0; s<MAIN_SLOT_COUNT; s++){
+    const grid = document.querySelector(`[data-mslot-grid="${mobId}-${s}"]`);
+    if(!grid) continue;
+    const val = mobSlotPaddock[mobId][s];
+    Array.from(grid.children).forEach(btn => btn.classList.toggle('active-g', val !== null && val !== undefined && String(btn.textContent) === String(val)));
+    const haInput = document.querySelector(`[data-mslot-ha="${mobId}-${s}"]`);
+    if(haInput) haInput.value = mobSlotHa[mobId][s] ?? '';
+  }
+  updateMobChips(mobId);
 }
 const mainMobRowsEl = document.getElementById('mainMobRows');
 MAIN_MOBS.forEach(m => mainMobRowsEl.appendChild(buildMainMobRow(m)));
 
-// ---------- STRIP GRAZER WIDGETS (now accordion style) ----------
+// ---------- STRIP GRAZER WIDGETS ----------
 function computePrevStripEntry(mobId, beforeDateKey){
   let cursor = beforeDateKey;
   for(let i=0; i<400; i++){
@@ -471,7 +546,7 @@ function buildStripWidget(mob){
     btn.addEventListener('click', () => {
       Array.from(grid.children).forEach(b => b.classList.remove('active-g'));
       btn.classList.add('active-g'); stripState[mob.id].paddock = p;
-      refreshStripTally(mob.id);
+      refreshStripTally(mob.id); updateGrazingTotals();
     });
     grid.appendChild(btn);
   });
@@ -495,6 +570,16 @@ function updateStripSummary(mobId){
   if(st.paddock !== null) parts.push('Paddock ' + st.paddock);
   if(st.count !== null && st.count !== undefined) parts.push(st.count + ' cows');
   el.textContent = parts.length ? parts.join(' · ') : 'Not set';
+}
+function setStripUIFromState(mobId){
+  const st = stripState[mobId];
+  const grid = document.querySelector(`[data-strip-grid="${mobId}"]`);
+  if(grid) Array.from(grid.children).forEach(b => b.classList.toggle('active-g', st.paddock !== null && String(b.textContent) === String(st.paddock)));
+  const areaInput = document.querySelector(`[data-strip-area="${mobId}"]`);
+  if(areaInput) areaInput.value = st.plannedArea ?? '';
+  const countInput = document.querySelector(`[data-strip-count="${mobId}"]`);
+  if(countInput) countInput.value = st.count ?? '';
+  updateStripSummary(mobId);
 }
 function refreshStripTally(mobId){
   const st = stripState[mobId];
@@ -541,11 +626,82 @@ document.getElementById('calvingToggle').addEventListener('click', () => {
   document.getElementById('calvingSection').classList.toggle('open');
   document.getElementById('calvingChevron').textContent = document.getElementById('calvingSection').classList.contains('open') ? '▴' : '▾';
 });
+document.getElementById('roundToggle').addEventListener('click', () => {
+  document.getElementById('roundSection').classList.toggle('open');
+  document.getElementById('roundChevron').textContent = document.getElementById('roundSection').classList.contains('open') ? '▴' : '▾';
+});
+
+// ---------- ROUND 1 TRACKER / SPRING ROTATION PLANNER / BOSS SUMMARY ----------
+function loadRoundStart(){
+  const stored = localStorage.getItem(ROUND_START_KEY);
+  if(stored) return stored;
+  const y = new Date().getFullYear();
+  return y + '-07-20';
+}
+function saveRoundStart(v){ localStorage.setItem(ROUND_START_KEY, v); }
+let roundStartDate = loadRoundStart();
+document.getElementById('roundStartDate').value = roundStartDate;
+document.getElementById('roundStartDate').addEventListener('change', (e) => {
+  roundStartDate = e.target.value; saveRoundStart(roundStartDate); renderRoundTotals();
+});
+
+function dailyTotalAreaOn(k){
+  const e = entries[k];
+  if(!e) return null;
+  let total = 0, any = false;
+  MAIN_MOBS.forEach(m => { (e.mobAreas && e.mobAreas[m.id] || []).forEach(v => { if(v){ total += v; any = true; } }); });
+  ALL_STRIP_MOBS.forEach(m => { const sg = e.stripGrazers && e.stripGrazers[m.id]; if(sg && sg.plannedArea){ total += sg.plannedArea/10000; any = true; } });
+  return any ? total : null;
+}
+function renderRoundTotals(){
+  const usedOut = document.getElementById('roundUsedOut');
+  const srpOut = document.getElementById('roundSrpOut');
+  if(!roundStartDate || selectedDateKey < roundStartDate){
+    usedOut.textContent = '–'; srpOut.textContent = '–';
+    return;
+  }
+  let usedTotal = 0, srpTotal = 0;
+  let cursor = roundStartDate;
+  while(cursor <= selectedDateKey){
+    const dayArea = dailyTotalAreaOn(cursor);
+    if(dayArea !== null) usedTotal += dayArea;
+    const e = entries[cursor];
+    if(e && e.srpTarget) srpTotal += e.srpTarget;
+    cursor = keyOffsetFrom(cursor, 1);
+  }
+  usedOut.textContent = usedTotal.toFixed(2) + ' ha';
+  srpOut.textContent = srpTotal.toFixed(2) + ' ha';
+}
+function buildBossSummary(){
+  const e = entries[selectedDateKey] || {};
+  const lines = [];
+  const milkerCount = (e.herd1||0)+(e.herd2||0)+(e.herd3||0)+(e.oad||0);
+  const oadHa = ((e.stripGrazers && e.stripGrazers.oad && e.stripGrazers.oad.plannedArea) || 0) / 10000;
+  const milkerHa = ((e.mobAreas && MAIN_MOBS.reduce((sum,m)=> sum + ((e.mobAreas[m.id]||[]).reduce((a,b)=>a+(b||0),0)), 0)) || 0) + oadHa;
+  lines.push(`Milkers ${milkerCount} ${milkerHa.toFixed(2)}ha`);
+  const colArea = ((e.stripGrazers && e.stripGrazers.colostrum && e.stripGrazers.colostrum.plannedArea) || 0) / 10000;
+  lines.push(`Colostrums: ${e.colostrumCount||0} cows (${colArea.toFixed(2)}ha used for day)`);
+  lines.push(`Penos: ${e.peno||0} cows`);
+  lines.push(`New Mums: ${e.newMomsCount||0} cows`);
+  const usedOut = document.getElementById('roundUsedOut').textContent;
+  const srpOut = document.getElementById('roundSrpOut').textContent;
+  lines.push(`Total used for this round ${usedOut}`);
+  lines.push(`Spring rotation planner total ${srpOut}`);
+  return lines.join('\n');
+}
+document.getElementById('bossCopyBtn').addEventListener('click', async () => {
+  const text = buildBossSummary();
+  document.getElementById('bossOutput').value = text;
+  const status = document.getElementById('bossStatus');
+  try{ await navigator.clipboard.writeText(text); status.textContent = 'Copied to clipboard'; }
+  catch(e){ status.textContent = 'Generated below — copy manually'; }
+  setTimeout(()=>status.textContent='',2500);
+});
 
 // ---------- GRAZING TOTALS / ROUND LENGTH ----------
 function updateGrazingTotals(){
   let totalHa = 0;
-  MAIN_MOBS.forEach(m => { totalHa += parseFloat(document.querySelector(`[data-ha="${m.id}"]`)?.value) || 0; });
+  MAIN_MOBS.forEach(m => { mobSlotHa[m.id].forEach(v => { totalHa += (v || 0); }); });
   ALL_STRIP_MOBS.forEach(m => { totalHa += (stripState[m.id].plannedArea || 0) / 10000; });
   document.getElementById('totalAreaOut').textContent = totalHa.toFixed(2) + ' ha';
   const rl = document.getElementById('roundLengthOut');
@@ -560,39 +716,32 @@ function findPreviousValue(field, fromDateKey, maxLookback){
   }
   return null;
 }
-function findPreviousHa(mobId, fromDateKey, maxLookback){
+function findPreviousMainSlots(mobId, field, fromDateKey, maxLookback){
   for(let i = 1; i <= maxLookback; i++){
     const cursor = keyOffsetFrom(fromDateKey, -i);
-    if(entries[cursor] && entries[cursor].mobAreas && entries[cursor].mobAreas[mobId] !== undefined && entries[cursor].mobAreas[mobId] !== null) return entries[cursor].mobAreas[mobId];
+    if(entries[cursor] && entries[cursor][field] && entries[cursor][field][mobId]) return entries[cursor][field][mobId];
   }
   return null;
 }
 function resetFormBlank(){
-  ['milkLitres','milkSolidsTotal','sccField','herd1','herd2','herd3','oadField','penoField','rainfall','tempHigh','tempLow','notesField'].forEach(id => document.getElementById(id).value = '');
-  document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active-b','active-g'));
+  ['milkLitres','milkSolidsTotal','sccField','herd1','herd2','herd3','oadField','penoField','rainfall','tempHigh','tempLow','srpTarget','notesField'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('skipCollectionField').checked = false;
+  document.getElementById('milkLitres').disabled = false;
+  document.getElementById('milkSolidsTotal').disabled = false;
+  document.querySelectorAll('#windDirGroup .toggle-btn, #windStrGroup .toggle-btn').forEach(b => b.classList.remove('active-b'));
   selectedWindDir = null; selectedWindStr = null;
-  MAIN_MOBS.forEach(m => { mobPaddocks[m.id] = []; document.querySelector(`[data-ha="${m.id}"]`).value=''; setPaddockGridStateMain(m.id); });
+  MAIN_MOBS.forEach(m => { mobSlotPaddock[m.id] = new Array(MAIN_SLOT_COUNT).fill(null); mobSlotHa[m.id] = new Array(MAIN_SLOT_COUNT).fill(null); setMainSlotGridState(m.id); });
   ALL_STRIP_MOBS.forEach(m => {
     stripState[m.id] = { paddock:null, plannedArea:null, count:null, pendingActual:null };
-    const grid = document.querySelector(`[data-strip-grid="${m.id}"]`);
-    if(grid) Array.from(grid.children).forEach(b => b.classList.remove('active-g'));
-    const areaInput = document.querySelector(`[data-strip-area="${m.id}"]`); if(areaInput) areaInput.value = '';
-    const countInput = document.querySelector(`[data-strip-count="${m.id}"]`); if(countInput) countInput.value = '';
+    setStripUIFromState(m.id);
     const tallyEl = document.querySelector(`[data-strip-tally="${m.id}"]`); if(tallyEl) tallyEl.style.display='none';
     const varEl = document.querySelector(`[data-strip-variance="${m.id}"]`); if(varEl) varEl.style.display='none';
-    updateStripSummary(m.id);
   });
-}
-function setPaddockGridStateMain(mobId){
-  const arr = mobPaddocks[mobId] || [];
-  const grid = document.querySelector(`[data-grid="${mobId}"]`);
-  if(!grid) return;
-  Array.from(grid.children).forEach(btn => { btn.classList.toggle('active-g', arr.includes(isNaN(btn.textContent) ? btn.textContent : Number(btn.textContent))); });
-  updateMobChips(mobId);
 }
 function loadDateIntoForm(){
   resetFormBlank();
   document.getElementById('headerDate').textContent = formatDateNice(selectedDateKey);
+  document.getElementById('entryDateLabel').textContent = formatDateNice(selectedDateKey);
   const e = entries[selectedDateKey];
   if(e){
     document.getElementById('milkLitres').value = e.milkLitres ?? '';
@@ -606,31 +755,31 @@ function loadDateIntoForm(){
     document.getElementById('rainfall').value = e.rainfall ?? '';
     document.getElementById('tempHigh').value = e.tempHigh ?? '';
     document.getElementById('tempLow').value = e.tempLow ?? '';
+    document.getElementById('srpTarget').value = e.srpTarget ?? '';
     document.getElementById('notesField').value = e.notes ?? '';
+    if(e.skipCollection){
+      document.getElementById('skipCollectionField').checked = true;
+      document.getElementById('milkLitres').disabled = true;
+      document.getElementById('milkSolidsTotal').disabled = true;
+    }
     if(e.windDir){ selectedWindDir = e.windDir; document.querySelectorAll('#windDirGroup .toggle-btn').forEach(b => { if(b.dataset.val === e.windDir) b.classList.add('active-b'); }); }
     if(e.windStr){ selectedWindStr = e.windStr; document.querySelectorAll('#windStrGroup .toggle-btn').forEach(b => { if(b.dataset.val === e.windStr) b.classList.add('active-b'); }); }
-    if(e.mobPaddocks){ MAIN_MOBS.forEach(m => { mobPaddocks[m.id] = (e.mobPaddocks[m.id] || []).slice(); setPaddockGridStateMain(m.id); }); }
-    if(e.mobAreas){ MAIN_MOBS.forEach(m => { const v = e.mobAreas[m.id]; if(v !== undefined && v !== null) document.querySelector(`[data-ha="${m.id}"]`).value = v; }); }
+    MAIN_MOBS.forEach(m => {
+      mobSlotPaddock[m.id] = (e.mobPaddocks && e.mobPaddocks[m.id]) ? e.mobPaddocks[m.id].slice() : new Array(MAIN_SLOT_COUNT).fill(null);
+      mobSlotHa[m.id] = (e.mobAreas && e.mobAreas[m.id]) ? e.mobAreas[m.id].slice() : new Array(MAIN_SLOT_COUNT).fill(null);
+      setMainSlotGridState(m.id);
+    });
     ALL_STRIP_MOBS.forEach(m => {
       if(m.id === 'newMoms' && e.newMomsCount !== undefined) stripState[m.id].count = e.newMomsCount;
       if(m.id === 'colostrum' && e.colostrumCount !== undefined) stripState[m.id].count = e.colostrumCount;
-      const countInput = document.querySelector(`[data-strip-count="${m.id}"]`);
-      if(countInput && stripState[m.id].count !== null && stripState[m.id].count !== undefined) countInput.value = stripState[m.id].count;
-    });
-    if(e.stripGrazers){
-      ALL_STRIP_MOBS.forEach(m => {
+      if(e.stripGrazers && e.stripGrazers[m.id]){
         const sg = e.stripGrazers[m.id];
-        if(sg){
-          stripState[m.id].paddock = sg.paddock ?? null;
-          stripState[m.id].plannedArea = sg.plannedArea ?? null;
-          const grid = document.querySelector(`[data-strip-grid="${m.id}"]`);
-          if(grid && sg.paddock !== null && sg.paddock !== undefined) Array.from(grid.children).forEach(b => b.classList.toggle('active-g', String(b.textContent) === String(sg.paddock)));
-          const areaInput = document.querySelector(`[data-strip-area="${m.id}"]`);
-          if(areaInput && sg.plannedArea !== undefined && sg.plannedArea !== null) areaInput.value = sg.plannedArea;
-          if(sg.closedStay && sg.closedStay.actualAreaHa !== undefined) stripState[m.id].pendingActual = sg.closedStay.actualAreaHa;
-        }
-      });
-    }
+        stripState[m.id].paddock = sg.paddock ?? null;
+        stripState[m.id].plannedArea = sg.plannedArea ?? null;
+        if(sg.closedStay && sg.closedStay.actualAreaHa !== undefined) stripState[m.id].pendingActual = sg.closedStay.actualAreaHa;
+      }
+      setStripUIFromState(m.id);
+    });
   } else {
     const prevHerd1 = findPreviousValue('herd1', selectedDateKey, 14);
     const prevHerd2 = findPreviousValue('herd2', selectedDateKey, 14);
@@ -642,18 +791,33 @@ function loadDateIntoForm(){
     if(prevHerd3 !== null) document.getElementById('herd3').value = prevHerd3;
     if(prevOad !== null) document.getElementById('oadField').value = prevOad;
     if(prevPeno !== null) document.getElementById('penoField').value = prevPeno;
-    MAIN_MOBS.forEach(m => { const v = findPreviousHa(m.id, selectedDateKey, 14); if(v !== null) document.querySelector(`[data-ha="${m.id}"]`).value = v; });
+    const prevSrp = findPreviousValue('srpTarget', selectedDateKey, 14);
+    if(prevSrp !== null) document.getElementById('srpTarget').value = prevSrp;
+
+    MAIN_MOBS.forEach(m => {
+      const prevPads = findPreviousMainSlots(m.id, 'mobPaddocks', selectedDateKey, 14);
+      const prevHas = findPreviousMainSlots(m.id, 'mobAreas', selectedDateKey, 14);
+      if(prevPads) mobSlotPaddock[m.id] = prevPads.slice();
+      if(prevHas) mobSlotHa[m.id] = prevHas.slice();
+      setMainSlotGridState(m.id);
+    });
+    ALL_STRIP_MOBS.forEach(m => {
+      const prev = computePrevStripEntry(m.id, selectedDateKey);
+      if(prev){ stripState[m.id].paddock = prev.data.paddock; stripState[m.id].plannedArea = prev.data.plannedArea; }
+      setStripUIFromState(m.id);
+    });
   }
   ALL_STRIP_MOBS.forEach(m => refreshStripTally(m.id));
-  updateSolidsPerCow(); updateGrazingTotals(); renderTrends();
+  updateSolidsPerCow(); updateGrazingTotals(); renderTrends(); renderRoundTotals();
 }
 loadDateIntoForm();
 
 // ---------- SAVE ----------
 document.getElementById('saveTodayBtn').addEventListener('click', () => {
   const key = selectedDateKey;
-  const mobPaddocksSnapshot = {}; MAIN_MOBS.forEach(m => mobPaddocksSnapshot[m.id] = mobPaddocks[m.id].slice());
-  const mobAreasSnapshot = {}; MAIN_MOBS.forEach(m => mobAreasSnapshot[m.id] = parseFloat(document.querySelector(`[data-ha="${m.id}"]`).value) || null);
+  const mobPaddocksSnapshot = {}; const mobAreasSnapshot = {};
+  MAIN_MOBS.forEach(m => { mobPaddocksSnapshot[m.id] = mobSlotPaddock[m.id].slice(); mobAreasSnapshot[m.id] = mobSlotHa[m.id].slice(); });
+
   const stripSnapshot = {};
   ALL_STRIP_MOBS.forEach(m => {
     const st = stripState[m.id];
@@ -668,10 +832,12 @@ document.getElementById('saveTodayBtn').addEventListener('click', () => {
     }
     stripSnapshot[m.id] = { paddock: st.paddock, plannedArea: st.plannedArea, closedStay };
   });
+
   entries[key] = {
     date: key,
-    milkLitres: parseFloat(document.getElementById('milkLitres').value) || null,
-    milkSolidsTotal: parseFloat(document.getElementById('milkSolidsTotal').value) || null,
+    skipCollection: document.getElementById('skipCollectionField').checked,
+    milkLitres: document.getElementById('skipCollectionField').checked ? null : (parseFloat(document.getElementById('milkLitres').value) || null),
+    milkSolidsTotal: document.getElementById('skipCollectionField').checked ? null : (parseFloat(document.getElementById('milkSolidsTotal').value) || null),
     scc: parseFloat(document.getElementById('sccField').value) || null,
     herd1: parseFloat(document.getElementById('herd1').value) || null,
     herd2: parseFloat(document.getElementById('herd2').value) || null,
@@ -684,6 +850,7 @@ document.getElementById('saveTodayBtn').addEventListener('click', () => {
     rainfall: parseFloat(document.getElementById('rainfall').value) || null,
     tempHigh: parseFloat(document.getElementById('tempHigh').value) || null,
     tempLow: parseFloat(document.getElementById('tempLow').value) || null,
+    srpTarget: parseFloat(document.getElementById('srpTarget').value) || null,
     mobAreas: mobAreasSnapshot,
     mobPaddocks: mobPaddocksSnapshot,
     stripGrazers: stripSnapshot,
@@ -713,9 +880,9 @@ function trendLineHtml(label, pct){
   const arrow = pct > 0.5 ? '▲' : (pct < -0.5 ? '▼' : '▬');
   return `<div class="stat-trend ${cls}">${arrow} ${label}: ${Math.abs(pct).toFixed(1)}%</div>`;
 }
-function statBoxHtml2(label, valStr, dayPct, weekPct){
+function statBoxHtml2(label, valStr, dayPct, weekPct, dayLabel){
   return `<div class="stat-box"><div class="stat-label">${label}</div><div class="stat-val">${valStr}</div>
-    ${trendLineHtml('vs yesterday', dayPct)}
+    ${trendLineHtml(dayLabel || 'vs yesterday', dayPct)}
     ${weekPct !== undefined ? trendLineHtml('vs 7-day avg', weekPct) : ''}
   </div>`;
 }
@@ -725,25 +892,80 @@ function solidsPerCowOn(k){
   if(cows<=0) return null;
   return en.milkSolidsTotal/cows;
 }
+// ---- Skip-day (alternate-day collection) handling ----
+// Raw stored figures are never altered. For averages/trends only, a collection
+// day's total is divided across itself plus any immediately preceding skip days,
+// so a 2-day combined total doesn't read as a single huge day.
+function consecutiveSkipDaysBefore(k){
+  let count = 0, cursor = k;
+  for(let i=0;i<10;i++){
+    cursor = keyOffsetFrom(cursor, -1);
+    const e = entries[cursor];
+    if(e && e.skipCollection) count++; else break;
+  }
+  return count;
+}
+function milkEquivalent(field, k){
+  const e = entries[k];
+  if(!e || e.skipCollection) return null;
+  const val = e[field];
+  if(val === null || val === undefined) return null;
+  return val / (consecutiveSkipDaysBefore(k) + 1);
+}
+function solidsPerCowEquivalent(k){
+  const e = entries[k];
+  if(!e || e.skipCollection) return null;
+  const msEq = milkEquivalent('milkSolidsTotal', k);
+  if(msEq === null) return null;
+  const cows = (e.herd1||0)+(e.herd2||0)+(e.herd3||0)+(e.oad||0);
+  if(cows<=0) return null;
+  return msEq/cows;
+}
+function findLastNonNull(getter, fromKeyExclusive, maxLookback){
+  for(let i=1;i<=maxLookback;i++){
+    const k = keyOffsetFrom(fromKeyExclusive, -i);
+    const v = getter(k);
+    if(v !== null && v !== undefined) return v;
+  }
+  return null;
+}
 function renderTrends(){
   const grid = document.getElementById('trendsGrid');
   const e = entries[selectedDateKey];
   const yKey = keyOffsetFrom(selectedDateKey, -1);
   const y = entries[yKey];
 
-  function block(label, unit, curVal, getter, decimals){
+  function block(label, unit, curVal, getter, decimals, dayLabel){
     const wAvg = trailingAvg(getter, selectedDateKey, 7, 3);
-    const yVal = getter(yKey);
-    const dayPct = pctChange(curVal, yVal);
+    const compareVal = dayLabel ? findLastNonNull(getter, selectedDateKey, 14) : getter(yKey);
+    const dayPct = pctChange(curVal, compareVal);
     const weekPct = pctChange(curVal, wAvg);
     const valStr = (curVal !== null && curVal !== undefined) ? curVal.toFixed(decimals)+unit : 'No data for this date';
-    return statBoxHtml2(label, valStr, dayPct, weekPct);
+    return statBoxHtml2(label, valStr, dayPct, weekPct, dayLabel);
   }
 
   let html = '';
   html += block('SCC', '', e?.scc ?? null, k => entries[k]?.scc ?? null, 0);
-  html += block('SOLIDS/COW', ' kg', solidsPerCowOn(selectedDateKey), solidsPerCowOn, 2);
-  html += block('MILK LITRES', ' L', e?.milkLitres ?? null, k => entries[k]?.milkLitres ?? null, 0);
+
+  // Solids/cow and milk litres: display today's actual raw figure (or "No collection
+  // today" on a skip day), but base the trend math on the skip-day-smoothed equivalents.
+  const solidsRaw = e?.skipCollection ? null : solidsPerCowOn(selectedDateKey);
+  const solidsEqToday = solidsPerCowEquivalent(selectedDateKey);
+  const solidsWAvg = trailingAvg(solidsPerCowEquivalent, selectedDateKey, 7, 3);
+  const solidsCompare = findLastNonNull(solidsPerCowEquivalent, selectedDateKey, 14);
+  const solidsDayPct = pctChange(solidsEqToday, solidsCompare);
+  const solidsWeekPct = pctChange(solidsEqToday, solidsWAvg);
+  const solidsValStr = e?.skipCollection ? 'No collection today' : (solidsRaw !== null ? solidsRaw.toFixed(2)+' kg' : 'No data for this date');
+  html += statBoxHtml2('SOLIDS/COW', solidsValStr, solidsDayPct, solidsWeekPct, 'vs last collection');
+
+  const litresRaw = e?.skipCollection ? null : (e?.milkLitres ?? null);
+  const litresEqToday = milkEquivalent('milkLitres', selectedDateKey);
+  const litresWAvg = trailingAvg(k => milkEquivalent('milkLitres', k), selectedDateKey, 7, 3);
+  const litresCompare = findLastNonNull(k => milkEquivalent('milkLitres', k), selectedDateKey, 14);
+  const litresDayPct = pctChange(litresEqToday, litresCompare);
+  const litresWeekPct = pctChange(litresEqToday, litresWAvg);
+  const litresValStr = e?.skipCollection ? 'No collection today' : (litresRaw !== null ? litresRaw+' L' : 'No data for this date');
+  html += statBoxHtml2('MILK LITRES', litresValStr, litresDayPct, litresWeekPct, 'vs last collection');
 
   function herdTotal(en){ if(!en) return null; return (en.herd1||0)+(en.herd2||0)+(en.herd3||0)+(en.oad||0)+(en.peno||0)+(en.newMomsCount||0)+(en.colostrumCount||0); }
   const todayTotal = herdTotal(e), yTotal = herdTotal(y);
@@ -777,14 +999,12 @@ document.querySelectorAll('#pod3ActionGroup .toggle-btn').forEach(btn => btn.add
 }));
 
 document.getElementById('klineDatePicker').value = selectedKlineDate;
-document.getElementById('klineDatePicker').addEventListener('change', (e) => { selectedKlineDate = e.target.value; loadKlineDateIntoForm(); });
-document.getElementById('klineTodayJumpBtn').addEventListener('click', () => {
-  selectedKlineDate = todayKeyReal(); document.getElementById('klineDatePicker').value = selectedKlineDate; loadKlineDateIntoForm();
-});
+function setKlineDate(newKey){ selectedKlineDate = newKey; document.getElementById('klineDatePicker').value = selectedKlineDate; renderKline(); }
+document.getElementById('klinePrevBtn').addEventListener('click', () => setKlineDate(keyOffsetFrom(selectedKlineDate, -1)));
+document.getElementById('klineNextBtn').addEventListener('click', () => setKlineDate(keyOffsetFrom(selectedKlineDate, 1)));
+document.getElementById('klineDatePicker').addEventListener('change', (e) => setKlineDate(e.target.value));
+document.getElementById('klineTodayJumpBtn').addEventListener('click', () => setKlineDate(todayKeyReal()));
 
-// Counter is always recomputed from history (walking back through whatever entries
-// exist, skipping gaps) rather than trusting a stored running total — this way,
-// backdating a missed day recalculates everything after it correctly.
 function computeKlineTally(podKey, dateKey){
   const hist = kline[podKey].history;
   const entry = hist[dateKey];
@@ -799,6 +1019,7 @@ function mostRecentKlineDate(podKey){
   return keys.length ? keys[keys.length-1] : null;
 }
 function loadKlineDateIntoForm(){
+  document.getElementById('klineDateLabel').textContent = formatDateNice(selectedKlineDate);
   ['pod1','pod3'].forEach(podKey => {
     const grid = document.getElementById(podKey + 'PaddockGrid');
     Array.from(grid.children).forEach(b => b.classList.remove('active-b'));
@@ -898,6 +1119,7 @@ function renderHistory(filter){
     const e = entries[key];
     const item = document.createElement('div'); item.className = 'entry-item';
     let pills = '';
+    if(e.skipCollection) pills += `<span class="pill blue">Skip day</span>`;
     if(e.milkLitres) pills += `<span class="pill">${e.milkLitres} L</span>`;
     if(e.milkSolidsTotal) pills += `<span class="pill amber">${e.milkSolidsTotal} kg MS</span>`;
     const cows = (e.herd1||0)+(e.herd2||0)+(e.herd3||0)+(e.oad||0);
@@ -926,9 +1148,7 @@ function openModal(key){
   if(e.oad) rows.push(['OAD', e.oad]); if(e.peno) rows.push(['PENO', e.peno]);
   if(e.newMomsCount) rows.push(['New Moms count', e.newMomsCount]); if(e.colostrumCount) rows.push(['Colostrum count', e.colostrumCount]);
   if(e.windDir || e.windStr) rows.push(['Wind', [e.windDir, e.windStr].filter(Boolean).join(' / ')]);
-  if(e.tempHigh !== null && e.tempHigh !== undefined || e.tempLow !== null && e.tempLow !== undefined){
-    rows.push(['Temp (high / low)', (e.tempHigh ?? '–') + '° / ' + (e.tempLow ?? '–') + '°']);
-  }
+  if((e.tempHigh !== null && e.tempHigh !== undefined) || (e.tempLow !== null && e.tempLow !== undefined)) rows.push(['Temp (high / low)', (e.tempHigh ?? '–') + '° / ' + (e.tempLow ?? '–') + '°']);
   if(e.rainfall !== null && e.rainfall !== undefined) rows.push(['Rainfall', e.rainfall + ' mm']);
 
   let html = '<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:14px;">';
@@ -936,10 +1156,12 @@ function openModal(key){
   html += '</div>';
   if(e.mobAreas || e.mobPaddocks){
     const lines = MAIN_MOBS.map(m => {
-      const ha = e.mobAreas ? e.mobAreas[m.id] : null;
       const pads = (e.mobPaddocks && e.mobPaddocks[m.id]) || [];
-      if(!ha && !pads.length) return null;
-      return `<div style="font-size:13px; margin-bottom:4px;"><strong>${m.label}:</strong> ${ha ? ha+' ha' : ''} ${pads.length ? '('+pads.join(', ')+')' : ''}</div>`;
+      const has = (e.mobAreas && e.mobAreas[m.id]) || [];
+      const parts = [];
+      for(let s=0; s<MAIN_SLOT_COUNT; s++){ if(pads[s] !== null && pads[s] !== undefined) parts.push('P' + pads[s] + (has[s] ? ' (' + has[s] + 'ha)' : '')); }
+      if(!parts.length) return null;
+      return `<div style="font-size:13px; margin-bottom:4px;"><strong>${m.label}:</strong> ${parts.join(', ')}</div>`;
     }).filter(Boolean);
     if(lines.length) html += `<div style="font-size:13px; margin-bottom:12px;"><div style="color:var(--ink-soft); margin-bottom:6px;">Main herd grazing</div>${lines.join('')}</div>`;
   }
