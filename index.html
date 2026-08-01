@@ -310,6 +310,11 @@
         <textarea class="export-output" id="exportOutput" readonly placeholder="Your export code will appear here — copy it and paste into a new chat."></textarea>
         <button class="copy-btn" id="exportCopyBtn">Copy to clipboard</button>
         <div class="status-msg" id="exportStatus"></div>
+
+        <label style="margin-top:16px;">Restore from a backup code</label>
+        <textarea id="importInput" style="min-height:100px;" placeholder="Paste a FARM_DIARY_EXPORT code here to restore data — merges into whatever's already saved, doesn't erase other dates."></textarea>
+        <button class="save-btn" id="importBtn" style="width:100%; margin-top:8px;">Import &amp; restore</button>
+        <div class="status-msg" id="importStatus"></div>
       </div>
     </div>
   </div>
@@ -359,6 +364,19 @@ function keyOffsetFrom(baseKey, days){
   const [y,m,d] = baseKey.split('-').map(Number);
   const dt = new Date(y, m-1, d); dt.setDate(dt.getDate()+days);
   return fmtKey(dt);
+}
+// Older saved/imported entries stored mobAreas/mobPaddocks as a single value per mob
+// (before the two-paddock-slot rebuild). Normalize any shape into a fixed 2-slot array.
+function normalizeSlotArray(val){
+  if(Array.isArray(val)){
+    const out = val.slice(0, MAIN_SLOT_COUNT);
+    while(out.length < MAIN_SLOT_COUNT) out.push(null);
+    return out;
+  }
+  if(val === null || val === undefined) return new Array(MAIN_SLOT_COUNT).fill(null);
+  const out = new Array(MAIN_SLOT_COUNT).fill(null);
+  out[0] = val;
+  return out;
 }
 function formatDateNice(key){
   const [y,m,d] = key.split('-').map(Number);
@@ -652,7 +670,7 @@ function dailyTotalAreaOn(k){
   const e = entries[k];
   if(!e) return null;
   let total = 0, any = false;
-  MAIN_MOBS.forEach(m => { (e.mobAreas && e.mobAreas[m.id] || []).forEach(v => { if(v){ total += v; any = true; } }); });
+  MAIN_MOBS.forEach(m => { normalizeSlotArray(e.mobAreas && e.mobAreas[m.id]).forEach(v => { if(v){ total += v; any = true; } }); });
   ALL_STRIP_MOBS.forEach(m => { const sg = e.stripGrazers && e.stripGrazers[m.id]; if(sg && sg.plannedArea){ total += sg.plannedArea/10000; any = true; } });
   return any ? total : null;
 }
@@ -680,7 +698,7 @@ function buildBossSummary(){
   const lines = [];
   const milkerCount = (e.herd1||0)+(e.herd2||0)+(e.herd3||0)+(e.oad||0);
   const oadHa = ((e.stripGrazers && e.stripGrazers.oad && e.stripGrazers.oad.plannedArea) || 0) / 10000;
-  const milkerHa = ((e.mobAreas && MAIN_MOBS.reduce((sum,m)=> sum + ((e.mobAreas[m.id]||[]).reduce((a,b)=>a+(b||0),0)), 0)) || 0) + oadHa;
+  const milkerHa = ((e.mobAreas && MAIN_MOBS.reduce((sum,m)=> sum + (normalizeSlotArray(e.mobAreas[m.id]).reduce((a,b)=>a+(b||0),0)), 0)) || 0) + oadHa;
   lines.push(`Milkers ${milkerCount} ${milkerHa.toFixed(2)}ha`);
   const colArea = ((e.stripGrazers && e.stripGrazers.colostrum && e.stripGrazers.colostrum.plannedArea) || 0) / 10000;
   lines.push(`Colostrums: ${e.colostrumCount||0} cows (${colArea.toFixed(2)}ha used for day)`);
@@ -722,7 +740,7 @@ function findPreviousValue(field, fromDateKey, maxLookback){
 function findPreviousMainSlots(mobId, field, fromDateKey, maxLookback){
   for(let i = 1; i <= maxLookback; i++){
     const cursor = keyOffsetFrom(fromDateKey, -i);
-    if(entries[cursor] && entries[cursor][field] && entries[cursor][field][mobId]) return entries[cursor][field][mobId];
+    if(entries[cursor] && entries[cursor][field] && entries[cursor][field][mobId]) return normalizeSlotArray(entries[cursor][field][mobId]);
   }
   return null;
 }
@@ -768,8 +786,8 @@ function loadDateIntoForm(){
     if(e.windDir){ selectedWindDir = e.windDir; document.querySelectorAll('#windDirGroup .toggle-btn').forEach(b => { if(b.dataset.val === e.windDir) b.classList.add('active-b'); }); }
     if(e.windStr){ selectedWindStr = e.windStr; document.querySelectorAll('#windStrGroup .toggle-btn').forEach(b => { if(b.dataset.val === e.windStr) b.classList.add('active-b'); }); }
     MAIN_MOBS.forEach(m => {
-      mobSlotPaddock[m.id] = (e.mobPaddocks && e.mobPaddocks[m.id]) ? e.mobPaddocks[m.id].slice() : new Array(MAIN_SLOT_COUNT).fill(null);
-      mobSlotHa[m.id] = (e.mobAreas && e.mobAreas[m.id]) ? e.mobAreas[m.id].slice() : new Array(MAIN_SLOT_COUNT).fill(null);
+      mobSlotPaddock[m.id] = normalizeSlotArray(e.mobPaddocks && e.mobPaddocks[m.id]);
+      mobSlotHa[m.id] = normalizeSlotArray(e.mobAreas && e.mobAreas[m.id]);
       setMainSlotGridState(m.id);
     });
     ALL_STRIP_MOBS.forEach(m => {
@@ -1187,8 +1205,8 @@ function openModal(key){
   html += '</div>';
   if(e.mobAreas || e.mobPaddocks){
     const lines = MAIN_MOBS.map(m => {
-      const pads = (e.mobPaddocks && e.mobPaddocks[m.id]) || [];
-      const has = (e.mobAreas && e.mobAreas[m.id]) || [];
+      const pads = normalizeSlotArray(e.mobPaddocks && e.mobPaddocks[m.id]);
+      const has = normalizeSlotArray(e.mobAreas && e.mobAreas[m.id]);
       const parts = [];
       for(let s=0; s<MAIN_SLOT_COUNT; s++){ if(pads[s] !== null && pads[s] !== undefined) parts.push('P' + pads[s] + (has[s] ? ' (' + has[s] + 'ha)' : '')); }
       if(!parts.length) return null;
@@ -1265,6 +1283,52 @@ document.getElementById('exportCopyBtn').addEventListener('click', async () => {
   try{ await navigator.clipboard.writeText(out.value); statusEl.textContent = 'Copied to clipboard'; }
   catch(e){ out.select(); document.execCommand('copy'); statusEl.textContent = 'Copied to clipboard'; }
   setTimeout(()=>statusEl.textContent='',2500);
+});
+
+// ---------- IMPORT (restore from a FARM_DIARY_EXPORT backup code) ----------
+// Merges into whatever's already saved — for each date in the pasted code, only the
+// fields that dataset actually covers get written; everything else already on that
+// date (from other dataset types) is left untouched.
+function importFarmDiaryData(text){
+  text = (text || '').trim();
+  if(!text.startsWith('FARM_DIARY_EXPORT:')) return { ok:false, msg:'Not a valid FARM_DIARY_EXPORT code' };
+  let parsed;
+  try{ parsed = JSON.parse(text.slice('FARM_DIARY_EXPORT:'.length)); }
+  catch(e){ return { ok:false, msg:'Could not read that code — check it was pasted in full' }; }
+
+  let dateCount = 0;
+  ['production','grazing','weatherNotes'].forEach(section => {
+    if(!Array.isArray(parsed[section])) return;
+    parsed[section].forEach(rec => {
+      if(!rec.date) return;
+      const clean = Object.assign({}, rec); delete clean.date;
+      entries[rec.date] = Object.assign({}, entries[rec.date] || { date: rec.date }, clean);
+      dateCount++;
+    });
+  });
+  let klineCount = 0;
+  if(parsed.kline){
+    ['pod1','pod3'].forEach(p => {
+      if(parsed.kline[p]){
+        Object.keys(parsed.kline[p]).forEach(d => { kline[p].history[d] = parsed.kline[p][d]; klineCount++; });
+      }
+    });
+  }
+  saveEntries(entries);
+  saveKline(kline);
+  return { ok:true, msg:`Restored ${dateCount} date(s)${klineCount ? ' + ' + klineCount + ' k-line entries' : ''}` };
+}
+document.getElementById('importBtn').addEventListener('click', () => {
+  const text = document.getElementById('importInput').value;
+  const statusEl = document.getElementById('importStatus');
+  const result = importFarmDiaryData(text);
+  statusEl.textContent = result.msg;
+  statusEl.style.color = result.ok ? 'var(--green)' : 'var(--rust)';
+  if(result.ok){
+    document.getElementById('importInput').value = '';
+    loadDateIntoForm();
+  }
+  setTimeout(() => { statusEl.textContent = ''; }, 4000);
 });
 </script>
 </body>
