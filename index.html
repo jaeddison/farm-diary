@@ -315,9 +315,8 @@
   </div>
 
   <div class="save-bar" id="saveBar">
-    <div style="flex:1;">
-      <button class="save-btn" id="saveTodayBtn">Save entry</button>
-      <div class="status-msg" id="statusMsg"></div>
+    <div style="flex:1; text-align:center; padding:8px 0;">
+      <div class="status-msg" id="statusMsg" style="color:var(--ink-soft);">Autosaving as you type</div>
     </div>
   </div>
 </div>
@@ -405,7 +404,10 @@ document.querySelectorAll('.card-head').forEach(head => head.addEventListener('c
 document.querySelector('[data-card="export"] .card-head').classList.add('collapsed');
 
 // ---------- DATE NAV (Today) ----------
-function setEntryDate(newKey){ selectedDateKey = newKey; document.getElementById('entryDatePicker').value = selectedDateKey; loadDateIntoForm(); }
+function setEntryDate(newKey){
+  clearTimeout(autosaveTimer); persistCurrentEntry();
+  selectedDateKey = newKey; document.getElementById('entryDatePicker').value = selectedDateKey; loadDateIntoForm();
+}
 document.getElementById('entryPrevBtn').addEventListener('click', () => setEntryDate(keyOffsetFrom(selectedDateKey, -1)));
 document.getElementById('entryNextBtn').addEventListener('click', () => setEntryDate(keyOffsetFrom(selectedDateKey, 1)));
 document.getElementById('entryDatePicker').addEventListener('change', (e) => setEntryDate(e.target.value));
@@ -608,6 +610,7 @@ function refreshStripTally(mobId){
         const pct = plannedHa > 0 ? ((diff/plannedHa)*100).toFixed(1) : '–';
         resultEl.innerHTML = `<strong>Variance: ${diff >= 0 ? '+' : ''}${diff.toFixed(3)} ha (${pct}%)</strong> — ${diff >= 0 ? 'grazed more than planned' : 'grazed less than planned'}`;
       } else { resultEl.innerHTML = ''; }
+      scheduleAutosave();
     });
   } else {
     const tally = computeTallyAndCount(mobId, st.paddock, keyOffsetFrom(selectedDateKey, -1));
@@ -812,8 +815,11 @@ function loadDateIntoForm(){
 }
 loadDateIntoForm();
 
-// ---------- SAVE ----------
-document.getElementById('saveTodayBtn').addEventListener('click', () => {
+// ---------- AUTOSAVE ----------
+// Persists the current form state without resetting/reloading the inputs (so it's
+// safe to call while someone is mid-keystroke). loadDateIntoForm() is only used
+// when actually switching to a different date, never as part of autosave itself.
+function persistCurrentEntry(){
   const key = selectedDateKey;
   const mobPaddocksSnapshot = {}; const mobAreasSnapshot = {};
   MAIN_MOBS.forEach(m => { mobPaddocksSnapshot[m.id] = mobSlotPaddock[m.id].slice(); mobAreasSnapshot[m.id] = mobSlotHa[m.id].slice(); });
@@ -833,11 +839,12 @@ document.getElementById('saveTodayBtn').addEventListener('click', () => {
     stripSnapshot[m.id] = { paddock: st.paddock, plannedArea: st.plannedArea, closedStay };
   });
 
+  const skipChecked = document.getElementById('skipCollectionField').checked;
   entries[key] = {
     date: key,
-    skipCollection: document.getElementById('skipCollectionField').checked,
-    milkLitres: document.getElementById('skipCollectionField').checked ? null : (parseFloat(document.getElementById('milkLitres').value) || null),
-    milkSolidsTotal: document.getElementById('skipCollectionField').checked ? null : (parseFloat(document.getElementById('milkSolidsTotal').value) || null),
+    skipCollection: skipChecked,
+    milkLitres: skipChecked ? null : (parseFloat(document.getElementById('milkLitres').value) || null),
+    milkSolidsTotal: skipChecked ? null : (parseFloat(document.getElementById('milkSolidsTotal').value) || null),
     scc: parseFloat(document.getElementById('sccField').value) || null,
     herd1: parseFloat(document.getElementById('herd1').value) || null,
     herd2: parseFloat(document.getElementById('herd2').value) || null,
@@ -857,11 +864,35 @@ document.getElementById('saveTodayBtn').addEventListener('click', () => {
     notes: document.getElementById('notesField').value || ''
   };
   saveEntries(entries);
+
   const status = document.getElementById('statusMsg');
   status.textContent = 'Saved ' + formatDateNice(key);
-  setTimeout(() => { status.textContent = ''; }, 2500);
-  loadDateIntoForm();
+  clearTimeout(status._resetTimer);
+  status._resetTimer = setTimeout(() => { status.textContent = 'Autosaving as you type'; }, 1800);
+
+  // Refresh derived/computed displays only — never touch the raw input elements here.
+  updateSolidsPerCow();
+  updateGrazingTotals();
+  renderTrends();
+  renderRoundTotals();
+}
+
+let autosaveTimer = null;
+function scheduleAutosave(){
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(persistCurrentEntry, 700);
+}
+// Debounced autosave for free-typed fields (waits for a pause in typing)
+['milkLitres','milkSolidsTotal','sccField','herd1','herd2','herd3','oadField','penoField','rainfall','tempHigh','tempLow','srpTarget','notesField'].forEach(id => {
+  document.getElementById(id).addEventListener('input', scheduleAutosave);
 });
+document.querySelectorAll('[data-mslot-ha]').forEach(el => el.addEventListener('input', scheduleAutosave));
+document.querySelectorAll('[data-strip-area]').forEach(el => el.addEventListener('input', scheduleAutosave));
+document.querySelectorAll('[data-strip-count]').forEach(el => el.addEventListener('input', scheduleAutosave));
+// Immediate autosave for tap/click selections (no need to wait — there's nothing more to type)
+document.getElementById('skipCollectionField').addEventListener('change', persistCurrentEntry);
+document.querySelectorAll('#windDirGroup .toggle-btn, #windStrGroup .toggle-btn').forEach(btn => btn.addEventListener('click', persistCurrentEntry));
+document.querySelectorAll('[data-mslot-grid] .paddock-btn, [data-strip-grid] .paddock-btn').forEach(btn => btn.addEventListener('click', persistCurrentEntry));
 
 // ---------- TRENDS ----------
 function trailingAvg(getter, uptoDateKeyExclusive, windowSize, minPoints){
