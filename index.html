@@ -400,6 +400,8 @@ let stripState = {}; ALL_STRIP_MOBS.forEach(m => stripState[m.id] = { paddock:nu
 let modalCurrentKey = null;
 let pod1Action = null, pod3Action = null, pod1Selected = null, pod3Selected = null;
 let selectedDateKey = todayKeyReal();
+let autosaveTimer = null;
+let formTouched = false;
 
 document.getElementById('headerDate').textContent = formatDateNice(todayKeyReal());
 document.getElementById('entryDatePicker').value = selectedDateKey;
@@ -729,21 +731,7 @@ function updateGrazingTotals(){
   rl.textContent = totalHa > 0 ? (TOTAL_FARM_HA / totalHa).toFixed(1) + ' days' : '–';
 }
 
-// ---------- PREPOPULATION / LOAD DATE ----------
-function findPreviousValue(field, fromDateKey, maxLookback){
-  for(let i = 1; i <= maxLookback; i++){
-    const cursor = keyOffsetFrom(fromDateKey, -i);
-    if(entries[cursor] && entries[cursor][field] !== undefined && entries[cursor][field] !== null) return entries[cursor][field];
-  }
-  return null;
-}
-function findPreviousMainSlots(mobId, field, fromDateKey, maxLookback){
-  for(let i = 1; i <= maxLookback; i++){
-    const cursor = keyOffsetFrom(fromDateKey, -i);
-    if(entries[cursor] && entries[cursor][field] && entries[cursor][field][mobId]) return normalizeSlotArray(entries[cursor][field][mobId]);
-  }
-  return null;
-}
+// ---------- LOAD DATE ----------
 function resetFormBlank(){
   ['milkLitres','milkSolidsTotal','sccField','herd1','herd2','herd3','oadField','penoField','rainfall','tempHigh','tempLow','srpTarget','notesField'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('skipCollectionField').checked = false;
@@ -760,6 +748,7 @@ function resetFormBlank(){
   });
 }
 function loadDateIntoForm(){
+  formTouched = false;
   resetFormBlank();
   document.getElementById('headerDate').textContent = formatDateNice(selectedDateKey);
   document.getElementById('entryDateLabel').textContent = formatDateNice(selectedDateKey);
@@ -802,31 +791,9 @@ function loadDateIntoForm(){
       setStripUIFromState(m.id);
     });
   } else {
-    const prevHerd1 = findPreviousValue('herd1', selectedDateKey, 14);
-    const prevHerd2 = findPreviousValue('herd2', selectedDateKey, 14);
-    const prevHerd3 = findPreviousValue('herd3', selectedDateKey, 14);
-    const prevOad = findPreviousValue('oad', selectedDateKey, 14);
-    const prevPeno = findPreviousValue('peno', selectedDateKey, 14);
-    if(prevHerd1 !== null) document.getElementById('herd1').value = prevHerd1;
-    if(prevHerd2 !== null) document.getElementById('herd2').value = prevHerd2;
-    if(prevHerd3 !== null) document.getElementById('herd3').value = prevHerd3;
-    if(prevOad !== null) document.getElementById('oadField').value = prevOad;
-    if(prevPeno !== null) document.getElementById('penoField').value = prevPeno;
-    const prevSrp = findPreviousValue('srpTarget', selectedDateKey, 14);
-    if(prevSrp !== null) document.getElementById('srpTarget').value = prevSrp;
-
-    MAIN_MOBS.forEach(m => {
-      const prevPads = findPreviousMainSlots(m.id, 'mobPaddocks', selectedDateKey, 14);
-      const prevHas = findPreviousMainSlots(m.id, 'mobAreas', selectedDateKey, 14);
-      if(prevPads) mobSlotPaddock[m.id] = prevPads.slice();
-      if(prevHas) mobSlotHa[m.id] = prevHas.slice();
-      setMainSlotGridState(m.id);
-    });
-    ALL_STRIP_MOBS.forEach(m => {
-      const prev = computePrevStripEntry(m.id, selectedDateKey);
-      if(prev){ stripState[m.id].paddock = prev.data.paddock; stripState[m.id].plannedArea = prev.data.plannedArea; }
-      setStripUIFromState(m.id);
-    });
+    // Intentionally left blank — a new day starts with nothing prefilled.
+    // Prepopulation was removed: it was creating confusing chains of guessed
+    // values that could get mistaken for real entered data.
   }
   ALL_STRIP_MOBS.forEach(m => refreshStripTally(m.id));
   updateSolidsPerCow(); updateGrazingTotals(); renderTrends(); renderRoundTotals();
@@ -839,6 +806,7 @@ loadDateIntoForm();
 // when actually switching to a different date, never as part of autosave itself.
 function persistCurrentEntry(){
   const key = selectedDateKey;
+  if(!formTouched && !entries[key]) return; // nothing actually entered for this date yet — don't lock in prepopulated guesses
   const mobPaddocksSnapshot = {}; const mobAreasSnapshot = {};
   MAIN_MOBS.forEach(m => { mobPaddocksSnapshot[m.id] = mobSlotPaddock[m.id].slice(); mobAreasSnapshot[m.id] = mobSlotHa[m.id].slice(); });
 
@@ -895,8 +863,9 @@ function persistCurrentEntry(){
   renderRoundTotals();
 }
 
-let autosaveTimer = null;
+function touchAndPersist(){ formTouched = true; persistCurrentEntry(); }
 function scheduleAutosave(){
+  formTouched = true;
   clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(persistCurrentEntry, 700);
 }
@@ -908,9 +877,9 @@ document.querySelectorAll('[data-mslot-ha]').forEach(el => el.addEventListener('
 document.querySelectorAll('[data-strip-area]').forEach(el => el.addEventListener('input', scheduleAutosave));
 document.querySelectorAll('[data-strip-count]').forEach(el => el.addEventListener('input', scheduleAutosave));
 // Immediate autosave for tap/click selections (no need to wait — there's nothing more to type)
-document.getElementById('skipCollectionField').addEventListener('change', persistCurrentEntry);
-document.querySelectorAll('#windDirGroup .toggle-btn, #windStrGroup .toggle-btn').forEach(btn => btn.addEventListener('click', persistCurrentEntry));
-document.querySelectorAll('[data-mslot-grid] .paddock-btn, [data-strip-grid] .paddock-btn').forEach(btn => btn.addEventListener('click', persistCurrentEntry));
+document.getElementById('skipCollectionField').addEventListener('change', touchAndPersist);
+document.querySelectorAll('#windDirGroup .toggle-btn, #windStrGroup .toggle-btn').forEach(btn => btn.addEventListener('click', touchAndPersist));
+document.querySelectorAll('[data-mslot-grid] .paddock-btn, [data-strip-grid] .paddock-btn').forEach(btn => btn.addEventListener('click', touchAndPersist));
 
 // ---------- TRENDS ----------
 function trailingAvg(getter, uptoDateKeyExclusive, windowSize, minPoints){
