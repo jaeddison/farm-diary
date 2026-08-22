@@ -178,6 +178,26 @@
           <div class="field"><label>PENO</label><input type="number" id="penoField" inputmode="numeric"></div>
           <div class="field"></div>
         </div>
+
+        <div class="calving-toggle" id="daToggle" style="margin-top:14px;">
+          <span>Pull from Dairy Assistant</span>
+          <span id="daChevron">▾</span>
+        </div>
+        <div class="calving-section" id="daSection">
+          <div id="daLoginBlock">
+            <div class="field-row">
+              <div class="field"><label>Email</label><input type="email" id="daEmail" autocomplete="username"></div>
+              <div class="field"><label>Password</label><input type="password" id="daPassword" autocomplete="current-password"></div>
+            </div>
+            <button class="save-btn" id="daSignInBtn" style="width:100%;">Sign in</button>
+          </div>
+          <div id="daPullBlock" style="display:none;">
+            <div class="muted" style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Signed in as <span id="daUserEmail"></span></div>
+            <button class="save-btn" id="daPullBtn" style="width:100%;">Pull today's herd sizes</button>
+            <button class="copy-btn" id="daSignOutBtn" style="background:var(--rust); margin-top:8px;">Sign out</button>
+          </div>
+          <div class="status-msg" id="daStatus"></div>
+        </div>
       </div>
     </div>
 
@@ -334,6 +354,46 @@
   </div>
 </div>
 
+<script type="module">
+  import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+  import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, browserLocalPersistence, setPersistence }
+    from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+  import { getFirestore, doc, getDoc }
+    from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+
+  const daFirebaseConfig = {
+    apiKey: "AIzaSyDAt7Pj1FwsFHpnOIxUvP83FDKn4Tq5r8c",
+    authDomain: "calf-assistant.firebaseapp.com",
+    projectId: "calf-assistant",
+    storageBucket: "calf-assistant.firebasestorage.app",
+    messagingSenderId: "848244954361",
+    appId: "1:848244954361:web:a757848d5bb81e21363e28"
+  };
+  const daApp = initializeApp(daFirebaseConfig);
+  const daAuth = getAuth(daApp);
+  const daDb = getFirestore(daApp);
+  setPersistence(daAuth, browserLocalPersistence).catch(()=>{});
+
+  window._daSignIn = (email, pass) => signInWithEmailAndPassword(daAuth, email, pass);
+  window._daSignOut = () => signOut(daAuth);
+  window._daFetchHerdData = async () => {
+    const snap = await getDoc(doc(daDb, 'dairy', 'D1'));
+    if(!snap.exists()) throw new Error('Dairy Assistant record not found');
+    const d = snap.data();
+    return {
+      mob1: d.mob1 || 0,
+      mob2: d.mob2 || 0,
+      mob3: d.mob3 || 0,
+      oad: (d.oad || []).length,
+      peno: (d.peno || []).length,
+      newMoms: (d.newMoms || []).length,
+      colostrumMob: (d.colostrumMob || []).length
+    };
+  };
+  onAuthStateChanged(daAuth, user => {
+    if(window._daOnAuthChange) window._daOnAuthChange(user);
+  });
+</script>
 <script>
 const STORAGE_KEY = 'farmDiaryEntries';
 const KLINE_KEY = 'farmDiaryKLine';
@@ -649,6 +709,69 @@ document.getElementById('calvingToggle').addEventListener('click', () => {
   document.getElementById('calvingSection').classList.toggle('open');
   document.getElementById('calvingChevron').textContent = document.getElementById('calvingSection').classList.contains('open') ? '▴' : '▾';
 });
+
+// ---------- DAIRY ASSISTANT PULL ----------
+document.getElementById('daToggle').addEventListener('click', () => {
+  document.getElementById('daSection').classList.toggle('open');
+  document.getElementById('daChevron').textContent = document.getElementById('daSection').classList.contains('open') ? '▴' : '▾';
+});
+window._daOnAuthChange = function(user){
+  const loginBlock = document.getElementById('daLoginBlock');
+  const pullBlock = document.getElementById('daPullBlock');
+  if(!loginBlock || !pullBlock) return; // not loaded yet
+  if(user){
+    loginBlock.style.display = 'none';
+    pullBlock.style.display = 'block';
+    document.getElementById('daUserEmail').textContent = user.email || '';
+  } else {
+    loginBlock.style.display = 'block';
+    pullBlock.style.display = 'none';
+  }
+};
+document.getElementById('daSignInBtn').addEventListener('click', async () => {
+  const email = document.getElementById('daEmail').value.trim();
+  const pass = document.getElementById('daPassword').value;
+  const status = document.getElementById('daStatus');
+  if(!email || !pass){ status.textContent = 'Enter email and password'; status.style.color = 'var(--rust)'; return; }
+  status.textContent = 'Signing in...'; status.style.color = 'var(--ink-soft)';
+  try{
+    await window._daSignIn(email, pass);
+    status.textContent = 'Signed in';
+    status.style.color = 'var(--green)';
+    document.getElementById('daPassword').value = '';
+  }catch(e){
+    status.textContent = 'Sign in failed — check email and password';
+    status.style.color = 'var(--rust)';
+  }
+});
+document.getElementById('daSignOutBtn').addEventListener('click', async () => {
+  await window._daSignOut();
+  document.getElementById('daStatus').textContent = '';
+});
+document.getElementById('daPullBtn').addEventListener('click', async () => {
+  const status = document.getElementById('daStatus');
+  status.textContent = 'Pulling from Dairy Assistant...'; status.style.color = 'var(--ink-soft)';
+  try{
+    const d = await window._daFetchHerdData();
+    document.getElementById('herd1').value = d.mob1;
+    document.getElementById('herd2').value = d.mob2;
+    document.getElementById('herd3').value = d.mob3;
+    document.getElementById('oadField').value = d.oad;
+    document.getElementById('penoField').value = d.peno;
+    stripState.newMoms.count = d.newMoms;
+    stripState.colostrum.count = d.colostrumMob;
+    setStripUIFromState('newMoms');
+    setStripUIFromState('colostrum');
+    formTouched = true;
+    scheduleAutosave();
+    updateSolidsPerCow(); updateGrazingTotals();
+    status.textContent = `Pulled: Mob1 ${d.mob1}, Mob2 ${d.mob2}, Mob3 ${d.mob3}, OAD ${d.oad}, PENO ${d.peno}, New Moms ${d.newMoms}, Colostrum ${d.colostrumMob} — review, then it autosaves in a couple of seconds`;
+    status.style.color = 'var(--green)';
+  }catch(e){
+    status.textContent = 'Pull failed: ' + e.message;
+    status.style.color = 'var(--rust)';
+  }
+});
 document.getElementById('roundToggle').addEventListener('click', () => {
   document.getElementById('roundSection').classList.toggle('open');
   document.getElementById('roundChevron').textContent = document.getElementById('roundSection').classList.contains('open') ? '▴' : '▾';
@@ -698,18 +821,24 @@ function renderRoundTotals(){
 function buildBossSummary(){
   const e = entries[selectedDateKey] || {};
   const lines = [];
-  const milkerCount = (e.herd1||0)+(e.herd2||0)+(e.herd3||0)+(e.oad||0);
-  const oadHa = ((e.stripGrazers && e.stripGrazers.oad && e.stripGrazers.oad.plannedArea) || 0) / 10000;
-  const milkerHa = ((e.mobAreas && MAIN_MOBS.reduce((sum,m)=> sum + (normalizeSlotArray(e.mobAreas[m.id]).reduce((a,b)=>a+(b||0),0)), 0)) || 0) + oadHa;
-  lines.push(`Milkers ${milkerCount} ${milkerHa.toFixed(2)}ha`);
+  const mobHa = (mobId) => normalizeSlotArray(e.mobAreas && e.mobAreas[mobId]).reduce((a,b)=>a+(b||0),0);
+  lines.push('Milkers');
+  lines.push(`Mob 1: ${e.herd1||0} - ${mobHa('herd1').toFixed(2)}ha`);
+  lines.push(`Mob 2: ${e.herd2||0} - ${mobHa('herd2').toFixed(2)}ha`);
+  if((e.herd3||0) > 0 || mobHa('herd3') > 0){
+    lines.push(`Mob 3: ${e.herd3||0} - ${mobHa('herd3').toFixed(2)}ha`);
+  }
   const colArea = ((e.stripGrazers && e.stripGrazers.colostrum && e.stripGrazers.colostrum.plannedArea) || 0) / 10000;
   lines.push(`Colostrums: ${e.colostrumCount||0} cows (${colArea.toFixed(2)}ha used for day)`);
-  lines.push(`Penos: ${e.peno||0} cows`);
+  const oadHa = ((e.stripGrazers && e.stripGrazers.oad && e.stripGrazers.oad.plannedArea) || 0) / 10000;
+  lines.push(`Oad: ${e.oad||0} ${oadHa.toFixed(2)}ha`);
+  const penoHa = ((e.stripGrazers && e.stripGrazers.peno && e.stripGrazers.peno.plannedArea) || 0) / 10000;
+  lines.push(`Penos: ${e.peno||0} cows ${penoHa.toFixed(2)}ha`);
   lines.push(`New Mums: ${e.newMomsCount||0} cows`);
   const usedOut = document.getElementById('roundUsedOut').textContent;
   const srpOut = document.getElementById('roundSrpOut').textContent;
   lines.push(`Total used for this round ${usedOut}`);
-  lines.push(`Spring rotation planner total ${srpOut}`);
+  lines.push(`Spring rotation planner ${srpOut}`);
   return lines.join('\n');
 }
 document.getElementById('bossCopyBtn').addEventListener('click', async () => {
