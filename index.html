@@ -371,7 +371,7 @@
   };
   const daApp = initializeApp(daFirebaseConfig);
   const daAuth = getAuth(daApp);
-  const daDb = getFirestore(daApp);
+  const daDb = getFirestore(daApp, 'dairy-assistant');
   setPersistence(daAuth, browserLocalPersistence).catch(()=>{});
 
   window._daSignIn = (email, pass) => signInWithEmailAndPassword(daAuth, email, pass);
