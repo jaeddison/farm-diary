@@ -198,6 +198,28 @@
           </div>
           <div class="status-msg" id="daStatus"></div>
         </div>
+
+        <div class="calving-toggle" id="fdToggle" style="margin-top:14px;">
+          <span>Cloud backup</span>
+          <span id="fdChevron">▾</span>
+        </div>
+        <div class="calving-section" id="fdSection">
+          <div id="fdLoginBlock">
+            <div class="field-row">
+              <div class="field"><label>Email</label><input type="email" id="fdEmail" autocomplete="username"></div>
+              <div class="field"><label>Password</label><input type="password" id="fdPassword" autocomplete="current-password"></div>
+            </div>
+            <button class="save-btn" id="fdSignInBtn" style="width:100%;">Sign in</button>
+            <div style="font-size:12px; color:var(--ink-soft); margin-top:8px;">Signing in backs this diary up automatically to its own cloud project, so it isn't lost if this phone is. Separate from Dairy Assistant's sign-in above.</div>
+          </div>
+          <div id="fdPullBlock" style="display:none;">
+            <div class="muted" style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Signed in as <span id="fdUserEmail"></span></div>
+            <button class="save-btn" id="cloudSyncBtn" style="width:100%;">Sync backup now</button>
+            <button class="copy-btn" id="fdSignOutBtn" style="background:var(--rust); margin-top:8px;">Sign out</button>
+          </div>
+          <div class="status-msg" id="fdStatus"></div>
+          <div class="status-msg" id="cloudSyncStatus" style="color:var(--ink-soft); margin-top:4px;"></div>
+        </div>
       </div>
     </div>
 
@@ -358,7 +380,7 @@
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
   import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, browserLocalPersistence, setPersistence }
     from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-  import { getFirestore, doc, getDoc }
+  import { getFirestore, doc, getDoc, setDoc }
     from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
   const daFirebaseConfig = {
@@ -371,7 +393,7 @@
   };
   const daApp = initializeApp(daFirebaseConfig);
   const daAuth = getAuth(daApp);
-  const daDb = getFirestore(daApp, 'dairy-assistant');
+  const daDb = getFirestore(daApp, 'dairy-assistant'); // Dairy Assistant's own live data (read-only pull)
   setPersistence(daAuth, browserLocalPersistence).catch(()=>{});
 
   window._daSignIn = (email, pass) => signInWithEmailAndPassword(daAuth, email, pass);
@@ -392,6 +414,32 @@
   };
   onAuthStateChanged(daAuth, user => {
     if(window._daOnAuthChange) window._daOnAuthChange(user);
+  });
+
+  // --- Farm Diary's own cloud backup — a separate, dedicated Firebase project,
+  // entirely independent of Dairy Assistant's "calf-assistant" project above. ---
+  const fdFirebaseConfig = {
+    apiKey: "AIzaSyASwzko8-3XKCulurUe4KZyrzczlNbiN8A",
+    authDomain: "farm-diary-98f79.firebaseapp.com",
+    projectId: "farm-diary-98f79",
+    storageBucket: "farm-diary-98f79.firebasestorage.app",
+    messagingSenderId: "1055366970762",
+    appId: "1:1055366970762:web:2abd9333676fb708021c73"
+  };
+  const fdApp = initializeApp(fdFirebaseConfig, 'farmDiaryBackup');
+  const fdAuth = getAuth(fdApp);
+  const fdDb = getFirestore(fdApp);
+  setPersistence(fdAuth, browserLocalPersistence).catch(()=>{});
+
+  window._fdSignIn = (email, pass) => signInWithEmailAndPassword(fdAuth, email, pass);
+  window._fdSignOut = () => signOut(fdAuth);
+  window._fdPull = async () => {
+    const snap = await getDoc(doc(fdDb, 'farmDiary', 'data'));
+    return snap.exists() ? snap.data() : null;
+  };
+  window._fdPush = (payload) => setDoc(doc(fdDb, 'farmDiary', 'data'), payload);
+  onAuthStateChanged(fdAuth, user => {
+    if(window._fdOnAuthChange) window._fdOnAuthChange(user);
   });
 </script>
 <script>
@@ -416,6 +464,82 @@ function loadKline(){
   catch(e){ return { pod1:{history:{}}, pod3:{history:{}} }; }
 }
 function saveKline(k){ localStorage.setItem(KLINE_KEY, JSON.stringify(k)); }
+
+// ---------- CLOUD BACKUP (Firestore) ----------
+// localStorage stays the primary, always-works store — every read/write above is
+// untouched. This layer just mirrors it to the cloud so nothing is lost if the phone
+// is lost, and pulls a copy back down on sign-in so a wiped phone can recover.
+const LAST_SYNC_KEY = 'farmDiaryLastSync';
+let cloudSignedIn = false;
+let cloudPullDone = false; // gate — nothing pushes to the cloud until the initial pull has finished merging
+let cloudSyncTimer = null;
+let cloudSyncing = false;
+function setCloudStatus(text, color){
+  const el = document.getElementById('cloudSyncStatus');
+  if(!el) return;
+  el.textContent = text;
+  el.style.color = color || 'var(--ink-soft)';
+}
+function lastSyncLabel(){
+  const t = localStorage.getItem(LAST_SYNC_KEY);
+  if(!t) return 'Not backed up yet';
+  const d = new Date(parseInt(t,10));
+  return 'Last backed up ' + d.toLocaleDateString('en-GB',{day:'numeric',month:'short'}) + ' ' + d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+}
+function queueCloudPush(){
+  if(!cloudSignedIn) return;
+  clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = setTimeout(pushToCloud, 2000);
+}
+async function pushToCloud(){
+  // Never push before the initial pull has finished merging — otherwise a save
+  // made in that gap (e.g. right after signing in on a wiped phone, before the
+  // cloud copy has come down yet) would overwrite the real cloud backup with
+  // whatever's on this phone at that instant, which could be nothing at all.
+  if(!cloudSignedIn || cloudSyncing) return;
+  if(!cloudPullDone){ setCloudStatus('Still checking cloud backup — will sync right after'); return; }
+  cloudSyncing = true;
+  setCloudStatus('Backing up...');
+  try{
+    await window._fdPush({ entries, kline, roundStart: roundStartDate, updatedAt: Date.now() });
+    localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
+    setCloudStatus(lastSyncLabel(), 'var(--green)');
+  }catch(e){
+    setCloudStatus('Backup failed — will retry on next save', 'var(--rust)');
+  }
+  cloudSyncing = false;
+}
+async function pullAndMergeFromCloud(){
+  if(!cloudSignedIn) return;
+  cloudPullDone = false; // re-close the gate for this sign-in until this pull actually finishes
+  setCloudStatus('Checking cloud backup...');
+  try{
+    const cloud = await window._fdPull();
+    if(cloud){
+      // Cloud only fills gaps this device doesn't already have — anything typed
+      // here always wins, so an offline edit is never clobbered by an older backup.
+      entries = Object.assign({}, cloud.entries || {}, entries);
+      kline.pod1.history = Object.assign({}, (cloud.kline && cloud.kline.pod1 && cloud.kline.pod1.history) || {}, kline.pod1.history);
+      kline.pod3.history = Object.assign({}, (cloud.kline && cloud.kline.pod3 && cloud.kline.pod3.history) || {}, kline.pod3.history);
+      if(!localStorage.getItem(ROUND_START_KEY) && cloud.roundStart){
+        roundStartDate = cloud.roundStart;
+        const rsEl = document.getElementById('roundStartDate');
+        if(rsEl) rsEl.value = roundStartDate;
+        saveRoundStart(roundStartDate);
+      }
+      saveEntries(entries);
+      saveKline(kline);
+      loadDateIntoForm();
+      renderKline();
+      renderHistory();
+    }
+    setCloudStatus(lastSyncLabel());
+  }catch(e){
+    setCloudStatus('Could not reach cloud backup — using data on this phone', 'var(--rust)');
+  }
+  cloudPullDone = true; // gate open — whatever happened above, it's now safe to push
+  pushToCloud();
+}
 
 function todayKeyReal(){ const d = new Date(); return fmtKey(d); }
 function fmtKey(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -791,6 +915,52 @@ document.getElementById('daPullBtn').addEventListener('click', async () => {
     status.style.color = 'var(--rust)';
   }
 });
+
+// ---------- CLOUD BACKUP SIGN-IN (Farm Diary's own dedicated Firebase project) ----------
+document.getElementById('fdToggle').addEventListener('click', () => {
+  document.getElementById('fdSection').classList.toggle('open');
+  document.getElementById('fdChevron').textContent = document.getElementById('fdSection').classList.contains('open') ? '▴' : '▾';
+});
+window._fdOnAuthChange = function(user){
+  const loginBlock = document.getElementById('fdLoginBlock');
+  const pullBlock = document.getElementById('fdPullBlock');
+  if(!loginBlock || !pullBlock) return; // not loaded yet
+  if(user){
+    loginBlock.style.display = 'none';
+    pullBlock.style.display = 'block';
+    document.getElementById('fdUserEmail').textContent = user.email || '';
+    cloudSignedIn = true;
+    pullAndMergeFromCloud();
+  } else {
+    loginBlock.style.display = 'block';
+    pullBlock.style.display = 'none';
+    cloudSignedIn = false;
+    cloudPullDone = false;
+    setCloudStatus('Not signed in — saving on this phone only');
+  }
+};
+document.getElementById('cloudSyncBtn').addEventListener('click', () => { pushToCloud(); });
+document.getElementById('fdSignInBtn').addEventListener('click', async () => {
+  const email = document.getElementById('fdEmail').value.trim();
+  const pass = document.getElementById('fdPassword').value;
+  const status = document.getElementById('fdStatus');
+  if(!email || !pass){ status.textContent = 'Enter email and password'; status.style.color = 'var(--rust)'; return; }
+  status.textContent = 'Signing in...'; status.style.color = 'var(--ink-soft)';
+  try{
+    await window._fdSignIn(email, pass);
+    status.textContent = 'Signed in';
+    status.style.color = 'var(--green)';
+    document.getElementById('fdPassword').value = '';
+  }catch(e){
+    status.textContent = 'Sign in failed — check email and password';
+    status.style.color = 'var(--rust)';
+  }
+});
+document.getElementById('fdSignOutBtn').addEventListener('click', async () => {
+  await window._fdSignOut();
+  document.getElementById('fdStatus').textContent = '';
+});
+
 document.getElementById('roundToggle').addEventListener('click', () => {
   document.getElementById('roundSection').classList.toggle('open');
   document.getElementById('roundChevron').textContent = document.getElementById('roundSection').classList.contains('open') ? '▴' : '▾';
@@ -807,7 +977,7 @@ function saveRoundStart(v){ localStorage.setItem(ROUND_START_KEY, v); }
 let roundStartDate = loadRoundStart();
 document.getElementById('roundStartDate').value = roundStartDate;
 document.getElementById('roundStartDate').addEventListener('change', (e) => {
-  roundStartDate = e.target.value; saveRoundStart(roundStartDate); renderRoundTotals();
+  roundStartDate = e.target.value; saveRoundStart(roundStartDate); renderRoundTotals(); queueCloudPush();
 });
 
 function dailyTotalAreaOn(k){
@@ -998,6 +1168,7 @@ function persistCurrentEntry(){
     notes: document.getElementById('notesField').value || ''
   };
   saveEntries(entries);
+  queueCloudPush();
 
   const status = document.getElementById('statusMsg');
   status.textContent = 'Saved ' + formatDateNice(key);
@@ -1203,6 +1374,7 @@ function saveKlineEntry(podKey, dateKey, paddock, action){
   if(!paddock || !action) return false;
   kline[podKey].history[dateKey] = { paddock, action };
   saveKline(kline);
+  queueCloudPush();
   return true;
 }
 document.getElementById('pod1SaveBtn').addEventListener('click', () => {
@@ -1432,6 +1604,7 @@ function importFarmDiaryData(text){
   }
   saveEntries(entries);
   saveKline(kline);
+  queueCloudPush();
   return { ok:true, msg:`Restored ${dateCount} date(s)${klineCount ? ' + ' + klineCount + ' k-line entries' : ''}` };
 }
 document.getElementById('importBtn').addEventListener('click', () => {
