@@ -118,6 +118,7 @@
   .export-output{ width:100%; min-height:120px; font-family:'IBM Plex Mono',monospace; font-size:11px; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; margin-top:10px; }
   .copy-btn{ width:100%; padding:11px; background:var(--blue); color:#fff; border:none; border-radius:8px; font-weight:600; margin-top:8px; cursor:pointer; }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 <div class="app">
@@ -352,6 +353,11 @@
         <textarea class="export-output" id="exportOutput" readonly placeholder="Your export code will appear here — copy it and paste into a new chat."></textarea>
         <button class="copy-btn" id="exportCopyBtn">Copy to clipboard</button>
         <div class="status-msg" id="exportStatus"></div>
+
+        <label style="margin-top:16px;">Export to Excel</label>
+        <div style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">One readable row per day (production, herds, weather, grazing, k-line, notes) for the From/To range above — a spreadsheet to read through, not a backup code.</div>
+        <button class="save-btn" id="excelExportBtn" style="width:100%;">Download Excel file</button>
+        <div class="status-msg" id="excelExportStatus"></div>
 
         <label style="margin-top:16px;">Restore from a backup code</label>
         <textarea id="importInput" style="min-height:100px;" placeholder="Paste a FARM_DIARY_EXPORT code here to restore data — merges into whatever's already saved, doesn't erase other dates."></textarea>
@@ -1571,6 +1577,75 @@ document.getElementById('exportCopyBtn').addEventListener('click', async () => {
   try{ await navigator.clipboard.writeText(out.value); statusEl.textContent = 'Copied to clipboard'; }
   catch(e){ out.select(); document.execCommand('copy'); statusEl.textContent = 'Copied to clipboard'; }
   setTimeout(()=>statusEl.textContent='',2500);
+});
+
+// ---------- EXPORT TO EXCEL (readable spreadsheet, one row per day) ----------
+function mobAreaSummary(e, mobId){
+  // "4 (1.2ha), 15 (0.4ha)" — every paddock slot that mob used that day, or blank.
+  const paddocks = normalizeSlotArray(e.mobPaddocks && e.mobPaddocks[mobId]);
+  const areas = normalizeSlotArray(e.mobAreas && e.mobAreas[mobId]);
+  const parts = [];
+  paddocks.forEach((p, i) => { if(p){ const a = areas[i]; parts.push(a ? `${p} (${a}ha)` : `${p}`); } });
+  return parts.join(', ');
+}
+function stripSummary(e, mobId){
+  const sg = e.stripGrazers && e.stripGrazers[mobId];
+  if(!sg || !sg.paddock) return '';
+  const ha = sg.plannedArea ? (sg.plannedArea/10000).toFixed(2) + 'ha' : '';
+  return ha ? `${sg.paddock} (${ha})` : `${sg.paddock}`;
+}
+document.getElementById('excelExportBtn').addEventListener('click', () => {
+  const from = document.getElementById('exportFrom').value;
+  const to = document.getElementById('exportTo').value;
+  const statusEl = document.getElementById('excelExportStatus');
+  if(!from || !to){ statusEl.textContent = 'Pick a from and to date first'; statusEl.style.color = 'var(--rust)'; setTimeout(()=>statusEl.textContent='',2500); return; }
+  if(from > to){ statusEl.textContent = 'From date is after the to date'; statusEl.style.color = 'var(--rust)'; setTimeout(()=>statusEl.textContent='',2500); return; }
+  if(typeof XLSX === 'undefined'){ statusEl.textContent = 'Could not load the Excel library — check you have a connection and try again'; statusEl.style.color = 'var(--rust)'; return; }
+
+  const rows = [];
+  let k = from;
+  let guard = 0;
+  while(k <= to && guard < 5000){
+    guard++;
+    const e = entries[k] || {};
+    const p1 = kline.pod1.history[k];
+    const p3 = kline.pod3.history[k];
+    rows.push({
+      'Date': k,
+      'Day': formatDateNice(k).split(',')[0],
+      'Milk litres': e.skipCollection ? 'Skip day' : (e.milkLitres ?? ''),
+      'Milk solids (kg)': e.skipCollection ? '' : (e.milkSolidsTotal ?? ''),
+      'SCC': e.scc ?? '',
+      'Solids/cow (kg)': (() => { const v = solidsPerCowOn(k); return v === null ? '' : Math.round(v*100)/100; })(),
+      'Herd 1': e.herd1 ?? '', 'Herd 2': e.herd2 ?? '', 'Herd 3 (Staph)': e.herd3 ?? '',
+      'OAD': e.oad ?? '', 'PENO': e.peno ?? '',
+      'New Moms': e.newMomsCount ?? '', 'Colostrum': e.colostrumCount ?? '',
+      'Herd 1 paddock(s)': mobAreaSummary(e, 'herd1'),
+      'Herd 2 paddock(s)': mobAreaSummary(e, 'herd2'),
+      'Herd 3 paddock(s)': mobAreaSummary(e, 'herd3'),
+      'PENO paddock': stripSummary(e, 'peno'),
+      'OAD paddock': stripSummary(e, 'oad'),
+      'New Moms paddock': stripSummary(e, 'newMoms'),
+      'Colostrum paddock': stripSummary(e, 'colostrum'),
+      'Total area grazed (ha)': (() => { const v = dailyTotalAreaOn(k); return v === null ? '' : Math.round(v*100)/100; })(),
+      'Pod 1 paddock': p1 ? p1.paddock : '', 'Pod 1 action': p1 ? p1.action : '',
+      'Pod 3 paddock': p3 ? p3.paddock : '', 'Pod 3 action': p3 ? p3.action : '',
+      'Wind': [e.windDir, e.windStr].filter(Boolean).join(' '),
+      'High (°C)': e.tempHigh ?? '', 'Low (°C)': e.tempLow ?? '',
+      'Rainfall (mm)': e.rainfall ?? '',
+      'Notes': e.notes || ''
+    });
+    k = keyOffsetFrom(k, 1);
+  }
+
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws['!cols'] = Object.keys(rows[0] || {}).map(h => ({ wch: Math.max(h.length, 10) }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Farm Diary');
+  XLSX.writeFile(wb, `FarmDiary_${from}_to_${to}.xlsx`);
+  statusEl.textContent = `Downloaded ${rows.length} day(s)`;
+  statusEl.style.color = 'var(--green)';
+  setTimeout(()=>statusEl.textContent='',3500);
 });
 
 // ---------- IMPORT (restore from a FARM_DIARY_EXPORT backup code) ----------
