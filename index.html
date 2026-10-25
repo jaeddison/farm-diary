@@ -117,6 +117,21 @@
   .export-row .field{ flex:1; }
   .export-output{ width:100%; min-height:120px; font-family:'IBM Plex Mono',monospace; font-size:11px; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; margin-top:10px; }
   .copy-btn{ width:100%; padding:11px; background:var(--blue); color:#fff; border:none; border-radius:8px; font-weight:600; margin-top:8px; cursor:pointer; }
+  .tabbar button{ padding:12px 2px; font-size:13px; }
+  .paddock-btn.excluded{ background:var(--rust); border-color:var(--rust); color:#fff; }
+  .walk-row{ display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); }
+  .walk-row .wp{ font-family:'Roboto Slab',serif; font-weight:700; font-size:16px; min-width:46px; }
+  .walk-row .wmid{ flex:1; min-width:0; }
+  .walk-row .wbar{ height:6px; border-radius:3px; background:var(--green); margin-top:5px; }
+  .walk-row .wcover{ font-family:'IBM Plex Mono',monospace; font-size:14px; font-weight:600; }
+  .walk-row .wsub{ font-size:11px; color:var(--ink-soft); font-family:'IBM Plex Mono',monospace; }
+  .walk-row .wright{ text-align:right; font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ink-soft); }
+  .walk-row.grazed{ opacity:0.55; }
+  .walk-row.grazed .wbar{ background:var(--ink-soft); }
+  .badge{ display:inline-block; font-family:'IBM Plex Mono',monospace; font-size:10px; font-weight:600; letter-spacing:0.05em; padding:2px 6px; border-radius:4px; }
+  .badge.g{ background:var(--green-soft); color:var(--green); } .badge.s{ background:var(--ink-soft); color:#fff; } .badge.a{ background:var(--amber-soft); color:var(--amber); }
+  .excl-item{ display:flex; justify-content:space-between; align-items:center; font-size:12px; padding:7px 0; border-bottom:1px solid var(--line); font-family:'IBM Plex Mono',monospace; color:var(--ink-soft); }
+  .excl-item button{ background:none; border:none; color:var(--rust); font-size:16px; cursor:pointer; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
@@ -130,7 +145,9 @@
   <div class="tabbar">
     <button id="tabTodayBtn" class="active">Today</button>
     <button id="tabKlineBtn">K-line</button>
+    <button id="tabWalkBtn">Walk</button>
     <button id="tabHistoryBtn">History</button>
+    <button id="tabSettingsBtn">Settings</button>
   </div>
 
   <div class="view active" id="todayView">
@@ -231,6 +248,7 @@
           <div class="stat-box"><div class="stat-label">TOTAL AREA GRAZED</div><div class="stat-val" id="totalAreaOut">0.0 ha</div></div>
           <div class="stat-box"><div class="stat-label">ROUND LENGTH</div><div class="stat-val" id="roundLengthOut">–</div></div>
         </div>
+        <div id="inRoundNote" style="font-size:11px; color:var(--ink-soft); margin:-6px 0 12px; font-family:'IBM Plex Mono',monospace;"></div>
         <label style="font-size:12px; color:var(--ink-soft); display:block; margin-bottom:8px;">Main herd paddocks &amp; area (up to 2 paddocks each)</label>
         <div id="mainMobRows"></div>
         <label style="font-size:12px; color:var(--ink-soft); display:block; margin:12px 0 8px;">PENO &amp; OAD (strip grazing)</label>
@@ -255,6 +273,15 @@
           <button class="save-btn" id="bossCopyBtn" style="width:100%; margin-top:12px;">Copy summary</button>
           <textarea class="export-output" id="bossOutput" readonly style="min-height:100px;"></textarea>
           <div class="status-msg" id="bossStatus"></div>
+        </div>
+
+        <div class="calving-toggle" id="feedToggle" style="margin-top:14px;">
+          <span>Feed offered (estimate)</span>
+          <span id="feedChevron">▾</span>
+        </div>
+        <div class="calving-section" id="feedSection">
+          <div id="feedOut" style="font-size:13px;"></div>
+          <div style="font-size:11px; color:var(--ink-soft); margin-top:8px;">Area × (walk cover − post-grazing target) ÷ cows. Uses the latest walk on or before this date. An estimate of feed on offer, not intake.</div>
         </div>
       </div>
     </div>
@@ -377,6 +404,65 @@
     </div>
   </div>
 
+  <div class="view" id="walkView">
+    <div class="field" id="walkSelectWrap" style="margin-bottom:12px; display:none;"><label>Walk</label><select id="walkSelect" style="width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:15px;"></select></div>
+    <div id="walkEmpty" class="card" style="font-size:13px; color:var(--ink-soft);">No pasture walk imported yet. Open "Import a walk" below and choose the Hawkeye CSV.</div>
+    <div id="walkBody" style="display:none;">
+      <div class="stat-grid" style="margin-bottom:12px;">
+        <div class="stat-box"><div class="stat-label">IN-ROUND AVG COVER</div><div class="stat-val" id="walkAvgOut">–</div><div class="wsub" id="walkAvgSub" style="font-size:11px; color:var(--ink-soft);"></div></div>
+        <div class="stat-box"><div class="stat-label">TO GRAZE</div><div class="stat-val" id="walkLeftOut">–</div><div class="wsub" id="walkLeftSub" style="font-size:11px; color:var(--ink-soft);"></div></div>
+      </div>
+      <div class="stat-box" id="walkGrowthBox" style="margin-bottom:12px; display:none;">
+        <div class="stat-label">PASTURE GROWTH SINCE LAST WALK</div>
+        <div class="stat-val" id="walkGrowthOut">–</div>
+        <div id="walkGrowthSub" style="font-size:11px; color:var(--ink-soft);"></div>
+      </div>
+      <div class="card" style="padding:12px;">
+        <div style="font-size:12px; color:var(--ink-soft); margin-bottom:6px;">Feed wedge — paddocks still to graze, highest cover first</div>
+        <div id="walkWedge"></div>
+      </div>
+      <div class="card" style="padding:4px 14px;"><div id="walkList"></div></div>
+      <div id="walkOutNote" style="font-size:12px; color:var(--ink-soft); margin:-4px 2px 14px;"></div>
+      <div id="walkTrend" style="font-size:12px; color:var(--ink-soft); margin:0 2px 14px; font-family:'IBM Plex Mono',monospace;"></div>
+    </div>
+    <div class="card" data-card="walkimport">
+      <div class="card-head"><span class="dot b"></span><h2>Import a walk</h2><span class="chevron">▾</span></div>
+      <div class="card-body">
+        <div style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Export the Pasture cover / Feed wedge report from Hawkeye as a CSV, then choose it here.</div>
+        <input type="file" id="walkFile" accept=".csv,text/csv,text/plain" style="width:100%; margin-bottom:8px;">
+        <textarea id="walkPaste" style="min-height:70px;" placeholder="…or paste the CSV text here"></textarea>
+        <div id="walkPreview" style="display:none; margin-top:10px;">
+          <div id="walkPreviewText" style="font-size:13px; margin-bottom:8px;"></div>
+          <div class="field"><label>Walk date</label><input type="date" id="walkDateInput"></div>
+          <button class="save-btn" id="walkImportBtn" style="width:100%; margin-top:8px;">Import walk</button>
+        </div>
+        <div class="status-msg" id="walkImportStatus"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="view" id="settingsView">
+    <div class="card" data-card="exclusions">
+      <div class="card-head"><span class="dot r"></span><h2>Paddocks out of the round</h2><span class="chevron">▾</span></div>
+      <div class="card-body">
+        <div style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">For crop, silage or anything else taken out. Set the date, then tap a paddock to take it out from that date; tap a red one to put it back from that date. Round length uses the paddocks in the round on each day.</div>
+        <div class="field" style="margin-bottom:10px;"><label>Effective from</label><input type="date" id="exclDate"></div>
+        <div class="paddock-grid" id="exclGrid" style="margin-bottom:10px;"></div>
+        <div id="exclSummary" style="font-size:12px; color:var(--ink-soft); margin-bottom:8px;"></div>
+        <div id="exclList"></div>
+      </div>
+    </div>
+    <div class="card" data-card="pasturetargets">
+      <div class="card-head"><span class="dot a"></span><h2>Cover targets</h2><span class="chevron">▾</span></div>
+      <div class="card-body">
+        <div class="field-row">
+          <div class="field"><label>Pre-grazing (kg DM/ha)</label><input type="number" id="preTarget" inputmode="numeric"></div>
+          <div class="field"><label>Post-grazing (kg DM/ha)</label><input type="number" id="postTarget" inputmode="numeric"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="save-bar" id="saveBar">
     <div style="flex:1; text-align:center; padding:8px 0;">
       <div class="status-msg" id="statusMsg" style="color:var(--ink-soft);">Autosaving as you type</div>
@@ -463,6 +549,14 @@ const STORAGE_KEY = 'farmDiaryEntries';
 const KLINE_KEY = 'farmDiaryKLine';
 const ROUND_START_KEY = 'farmDiaryRoundStart';
 const TOTAL_FARM_HA = 369;
+const WALKS_KEY = 'farmDiaryWalks';
+const EXCL_KEY = 'farmDiaryExclusions';
+const PASTURE_SET_KEY = 'farmDiaryPastureSettings';
+const KNOWN_AREAS = { '44b': 0.4 }; // not measured by Hawkeye; used only if no walk has the paddock
+function loadJsonKey(key, dflt){ try{ const r = localStorage.getItem(key); return r ? JSON.parse(r) : dflt; }catch(e){ return dflt; } }
+let walks = loadJsonKey(WALKS_KEY, {});
+let exclusions = loadJsonKey(EXCL_KEY, []);
+let pastureSettings = Object.assign({ pre:2850, post:1500 }, loadJsonKey(PASTURE_SET_KEY, {}));
 
 const PADDOCKS = [1,2,3,4,5,6,7,14,15,16,17,18,19,20,21,22,23,24,25,'25a',26,'26a',27,'27a','27b','28a','28b',29,30,31,32,33,35,36,37,38,39,40,41,42,43,'44a','44b',45,46,47,48,49,50,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67];
 const POD1_PADDOCKS = [4,5,14,15,16,17];
@@ -517,7 +611,7 @@ async function pushToCloud(){
   cloudSyncing = true;
   setCloudStatus('Backing up...');
   try{
-    await window._fdPush({ entries, kline, roundStart: roundStartDate, updatedAt: Date.now() });
+    await window._fdPush({ entries, kline, roundStart: roundStartDate, walks, exclusions, pastureSettings, updatedAt: Date.now() });
     localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
     setCloudStatus(lastSyncLabel(), 'var(--green)');
   }catch(e){
@@ -543,11 +637,20 @@ async function pullAndMergeFromCloud(){
         if(rsEl) rsEl.value = roundStartDate;
         saveRoundStart(roundStartDate);
       }
+      walks = Object.assign({}, cloud.walks || {}, walks);
+      const exKeys = new Set(exclusions.map(x => x.paddock + '|' + x.from));
+      (cloud.exclusions || []).forEach(x => { if(!exKeys.has(x.paddock + '|' + x.from)) exclusions.push(x); });
+      if(!localStorage.getItem(PASTURE_SET_KEY) && cloud.pastureSettings) pastureSettings = Object.assign(pastureSettings, cloud.pastureSettings);
+      localStorage.setItem(WALKS_KEY, JSON.stringify(walks));
+      localStorage.setItem(EXCL_KEY, JSON.stringify(exclusions));
+      localStorage.setItem(PASTURE_SET_KEY, JSON.stringify(pastureSettings));
       saveEntries(entries);
       saveKline(kline);
       loadDateIntoForm();
       renderKline();
       renderHistory();
+      renderWalk();
+      renderSettings();
     }
     setCloudStatus(lastSyncLabel());
   }catch(e){
@@ -603,15 +706,22 @@ document.getElementById('entryDatePicker').value = selectedDateKey;
 const tabTodayBtn = document.getElementById('tabTodayBtn'), tabKlineBtn = document.getElementById('tabKlineBtn'), tabHistoryBtn = document.getElementById('tabHistoryBtn');
 const todayView = document.getElementById('todayView'), klineView = document.getElementById('klineView'), historyView = document.getElementById('historyView');
 const saveBar = document.getElementById('saveBar');
+const walkView = document.getElementById('walkView'), settingsView = document.getElementById('settingsView');
+const tabWalkBtn = document.getElementById('tabWalkBtn'), tabSettingsBtn = document.getElementById('tabSettingsBtn');
 tabTodayBtn.addEventListener('click', () => switchTab('today'));
 tabKlineBtn.addEventListener('click', () => switchTab('kline'));
+tabWalkBtn.addEventListener('click', () => switchTab('walk'));
 tabHistoryBtn.addEventListener('click', () => switchTab('history'));
+tabSettingsBtn.addEventListener('click', () => switchTab('settings'));
 function switchTab(tab){
-  [todayView, klineView, historyView].forEach(v => v.classList.remove('active'));
-  [tabTodayBtn, tabKlineBtn, tabHistoryBtn].forEach(b => b.classList.remove('active'));
-  if(tab === 'today'){ todayView.classList.add('active'); tabTodayBtn.classList.add('active'); saveBar.style.display = 'flex'; }
-  else if(tab === 'kline'){ klineView.classList.add('active'); tabKlineBtn.classList.add('active'); saveBar.style.display = 'none'; renderKline(); }
-  else { historyView.classList.add('active'); tabHistoryBtn.classList.add('active'); saveBar.style.display = 'none'; renderHistory(); }
+  [todayView, klineView, walkView, historyView, settingsView].forEach(v => v.classList.remove('active'));
+  [tabTodayBtn, tabKlineBtn, tabWalkBtn, tabHistoryBtn, tabSettingsBtn].forEach(b => b.classList.remove('active'));
+  saveBar.style.display = tab === 'today' ? 'flex' : 'none';
+  if(tab === 'today'){ todayView.classList.add('active'); tabTodayBtn.classList.add('active'); }
+  else if(tab === 'kline'){ klineView.classList.add('active'); tabKlineBtn.classList.add('active'); renderKline(); }
+  else if(tab === 'walk'){ walkView.classList.add('active'); tabWalkBtn.classList.add('active'); renderWalk(); }
+  else if(tab === 'settings'){ settingsView.classList.add('active'); tabSettingsBtn.classList.add('active'); renderSettings(); }
+  else { historyView.classList.add('active'); tabHistoryBtn.classList.add('active'); renderHistory(); }
 }
 document.querySelectorAll('.card-head').forEach(head => head.addEventListener('click', () => head.closest('.card').classList.toggle('collapsed')));
 document.querySelector('[data-card="export"] .card-head').classList.add('collapsed');
@@ -1062,7 +1172,12 @@ function updateGrazingTotals(){
   ALL_STRIP_MOBS.forEach(m => { totalHa += (stripState[m.id].plannedArea || 0) / 10000; });
   document.getElementById('totalAreaOut').textContent = totalHa.toFixed(2) + ' ha';
   const rl = document.getElementById('roundLengthOut');
-  rl.textContent = totalHa > 0 ? (TOTAL_FARM_HA / totalHa).toFixed(1) + ' days' : '–';
+  const roundHa = inRoundHa(selectedDateKey);
+  rl.textContent = totalHa > 0 ? (roundHa / totalHa).toFixed(1) + ' days' : '–';
+  const ex = excludedOnDate(selectedDateKey);
+  const note = document.getElementById('inRoundNote');
+  if(note) note.textContent = `Round area ${roundHa.toFixed(1)} ha` + (ex.length ? ` (${ex.map(x => x.toUpperCase()).join(', ')} out)` : '');
+  if(document.getElementById('feedSection').classList.contains('open')) updateFeedOffered();
 }
 
 // ---------- LOAD DATE ----------
@@ -1545,6 +1660,312 @@ document.getElementById('modalDelete').addEventListener('click', () => {
 });
 
 
+// ---------- PASTURE WALKS (Hawkeye) / EXCLUDED PADDOCKS / FEED OFFERED ----------
+function savePasture(){
+  localStorage.setItem(WALKS_KEY, JSON.stringify(walks));
+  localStorage.setItem(EXCL_KEY, JSON.stringify(exclusions));
+  localStorage.setItem(PASTURE_SET_KEY, JSON.stringify(pastureSettings));
+  queueCloudPush();
+}
+function pk(name){ return String(name).trim().toLowerCase().replace(/\.+$/, ''); }
+function fmtShort(key){ const [y,m,d] = key.split('-').map(Number); return new Date(y, m-1, d).toLocaleDateString('en-GB', { day:'numeric', month:'short' }); }
+
+// --- exclusions ---
+function isExcludedOn(p, dateKey){ return exclusions.some(x => x.paddock === p && x.from <= dateKey && (!x.to || dateKey < x.to)); }
+function latestWalkWith(p, onOrBefore){
+  const dates = Object.keys(walks).sort().reverse();
+  for(const d of dates){ if(onOrBefore && d > onOrBefore) continue; if(walks[d].paddocks[p]) return { date:d, data:walks[d].paddocks[p] }; }
+  return null;
+}
+function paddockArea(p){
+  const w = latestWalkWith(p);
+  if(w) return w.data.area;
+  return KNOWN_AREAS[p] || 0;
+}
+function excludedOnDate(dateKey){ return Array.from(new Set(exclusions.map(x => x.paddock))).filter(p => isExcludedOn(p, dateKey)); }
+function inRoundHa(dateKey){
+  let ha = TOTAL_FARM_HA;
+  excludedOnDate(dateKey).forEach(p => { ha -= paddockArea(p); });
+  return ha;
+}
+
+// --- grazing index from the diary: paddock -> sorted dates it was grazed ---
+function buildGrazedIndex(){
+  const idx = {};
+  const add = (p, d) => { if(p === null || p === undefined || p === '') return; const k = pk(p); (idx[k] = idx[k] || []); if(idx[k][idx[k].length-1] !== d) idx[k].push(d); };
+  Object.keys(entries).sort().forEach(d => {
+    const e = entries[d];
+    MAIN_MOBS.forEach(m => normalizeSlotArray(e.mobPaddocks && e.mobPaddocks[m.id]).forEach(v => add(v, d)));
+    ALL_STRIP_MOBS.forEach(m => { const sg = e.stripGrazers && e.stripGrazers[m.id]; if(sg) add(sg.paddock, d); });
+  });
+  return idx;
+}
+
+// --- CSV parsing ---
+function parseCsv(text){
+  const rows = []; let row = [], cur = '', inQ = false;
+  text = text.replace(/^﻿/, '');
+  for(let i = 0; i < text.length; i++){
+    const c = text[i];
+    if(inQ){ if(c === '"'){ if(text[i+1] === '"'){ cur += '"'; i++; } else inQ = false; } else cur += c; }
+    else if(c === '"') inQ = true;
+    else if(c === ','){ row.push(cur); cur = ''; }
+    else if(c === '\n' || c === '\r'){ if(c === '\r' && text[i+1] === '\n') i++; row.push(cur); cur = ''; if(row.some(x => x.trim() !== '')) rows.push(row); row = []; }
+    else cur += c;
+  }
+  row.push(cur); if(row.some(x => x.trim() !== '')) rows.push(row);
+  return rows;
+}
+const MONTHS = { jan:1, feb:2, mar:3, apr:4, may:5, jun:6, jul:7, aug:8, sep:9, oct:10, nov:11, dec:12 };
+function parseHawkeyeDate(str){
+  const m = String(str).trim().match(/^(\d{1,2})[-\s\/]([A-Za-z]{3})[a-z]*[-\s\/](\d{4})$/);
+  if(!m || !MONTHS[m[2].toLowerCase()]) return null;
+  return m[3] + '-' + String(MONTHS[m[2].toLowerCase()]).padStart(2,'0') + '-' + m[1].padStart(2,'0');
+}
+function parseHawkeyeCsv(text){
+  const rows = parseCsv(text);
+  if(rows.length < 2) return { ok:false, msg:'That doesn\'t look like a Hawkeye CSV (no rows found)' };
+  const head = rows[0].map(h => h.trim().toLowerCase());
+  const col = (...needles) => head.findIndex(h => needles.every(n => h.includes(n)));
+  const iName = col('paddock name'), iCover = col('average pasture cover'), iBio = col('total biomass'), iArea = col('effective area'), iDate = col('event date');
+  if([iName, iCover, iBio, iArea].some(i => i < 0)) return { ok:false, msg:'Couldn\'t find the expected columns (Paddock name, Average pasture cover, Total biomass, Effective area)' };
+  const paddocks = {}; let drains = null;
+  rows.slice(1).forEach(r => {
+    const name = (r[iName] || '').trim(); if(!name) return;
+    const cover = parseFloat(r[iCover]), biomass = parseFloat(r[iBio]), area = parseFloat(r[iArea]);
+    if(isNaN(cover) || isNaN(area)) return;
+    const measured = iDate >= 0 ? parseHawkeyeDate(r[iDate]) : null;
+    if(/^drain/i.test(name)){ drains = { cover, biomass, area }; return; }
+    paddocks[pk(name)] = { cover, biomass: isNaN(biomass) ? cover * area : biomass, area, measured };
+  });
+  const keys = Object.keys(paddocks);
+  if(!keys.length) return { ok:false, msg:'No paddock rows found in that file' };
+  const dates = keys.map(k => paddocks[k].measured).filter(Boolean).sort();
+  return { ok:true, paddocks, drains, maxDate: dates.length ? dates[dates.length-1] : null };
+}
+
+// --- walk stats ---
+function walkAvgCover(w, onDate){
+  let bio = 0, area = 0;
+  Object.keys(w.paddocks).forEach(k => { if(isExcludedOn(k, onDate)) return; const p = w.paddocks[k]; bio += p.cover * p.area; area += p.area; });
+  return area ? { avg: bio / area, area } : null;
+}
+
+// --- Walk tab ---
+function renderWalk(){
+  const dates = Object.keys(walks).sort().reverse();
+  const sel = document.getElementById('walkSelect');
+  document.getElementById('walkSelectWrap').style.display = dates.length > 1 ? 'block' : 'none';
+  document.getElementById('walkEmpty').style.display = dates.length ? 'none' : 'block';
+  document.getElementById('walkBody').style.display = dates.length ? 'block' : 'none';
+  if(!dates.length) return;
+  const keep = sel.value && walks[sel.value] ? sel.value : dates[0];
+  sel.innerHTML = dates.map(d => `<option value="${d}">${formatDateNice(d)}</option>`).join('');
+  sel.value = keep;
+  const wd = keep, w = walks[wd];
+  const idx = buildGrazedIndex();
+  // Newest walk is judged against today; an older walk is judged as at its own date,
+  // and only counts grazing up to the next walk, so history reads as it was then.
+  const today = (wd === dates[0]) ? todayKeyReal() : wd;
+  const nextWalkDate = dates[dates.indexOf(wd) - 1] || null;
+  const pre = pastureSettings.pre, post = pastureSettings.post;
+
+  // Growth: only paddocks measured on both walks and NOT grazed in between (per the diary),
+  // so no intake assumption is needed — change in cover / days is the growth.
+  const prevDate = dates[dates.indexOf(wd) + 1];
+  const growthBy = {}; let gSum = 0, gArea = 0, gDaysMin = null, gDaysMax = null, gTooClose = false;
+  if(prevDate){
+    const pw = walks[prevDate];
+    Object.keys(w.paddocks).forEach(k => {
+      const a = w.paddocks[k], b = pw.paddocks[k];
+      if(!b || isExcludedOn(k, wd)) return;
+      const mNow = a.measured || wd, mPrev = b.measured || prevDate;
+      const days = daysBetweenKeys(mPrev, mNow);
+      if(days < 1) return;
+      if(days < 3){ gTooClose = true; return; }
+      if((idx[k] || []).some(d => d >= mPrev && d <= mNow)) return;
+      const g = (a.cover - b.cover) / days;
+      growthBy[k] = g; gSum += g * a.area; gArea += a.area;
+      gDaysMin = gDaysMin === null ? days : Math.min(gDaysMin, days); gDaysMax = gDaysMax === null ? days : Math.max(gDaysMax, days);
+    });
+  }
+  const gBox = document.getElementById('walkGrowthBox');
+  if(prevDate){
+    gBox.style.display = 'block';
+    if(gArea > 0){
+      document.getElementById('walkGrowthOut').textContent = Math.round(gSum / gArea) + ' kg DM/ha/day';
+      document.getElementById('walkGrowthSub').textContent = `${Object.keys(growthBy).length} ungrazed paddocks (${gArea.toFixed(1)} ha) · ${fmtShort(prevDate)} to ${fmtShort(wd)} · ${gDaysMin === gDaysMax ? gDaysMin : gDaysMin + '–' + gDaysMax} days`;
+    } else {
+      document.getElementById('walkGrowthOut').textContent = '–';
+      document.getElementById('walkGrowthSub').textContent = gTooClose ? 'Walks are less than 3 days apart — too close to measure growth' : 'No paddocks were ungrazed and measured on both walks';
+    }
+  } else gBox.style.display = 'none';
+
+  const items = [], outNames = [];
+  Object.keys(w.paddocks).forEach(k => {
+    const p = w.paddocks[k];
+    if(isExcludedOn(k, today)){ outNames.push(k); return; }
+    const gd = (idx[k] || []);
+    const measured = p.measured || wd;
+    const grazedAfter = gd.filter(d => d >= measured && (!nextWalkDate || d < nextWalkDate));
+    const before = gd.filter(d => d < measured);
+    items.push({ k, p, measured, grazedOn: grazedAfter.length ? grazedAfter[grazedAfter.length-1] : null, lastBefore: before.length ? before[before.length-1] : null });
+  });
+  const toGraze = items.filter(i => !i.grazedOn).sort((a,b) => b.p.cover - a.p.cover);
+  const grazed = items.filter(i => i.grazedOn).sort((a,b) => b.grazedOn.localeCompare(a.grazedOn) || b.p.cover - a.p.cover);
+  const maxCover = Math.max(pre, ...items.map(i => i.p.cover));
+
+  const avg = walkAvgCover(w, today);
+  document.getElementById('walkAvgOut').textContent = avg ? Math.round(avg.avg) + '' : '–';
+  document.getElementById('walkAvgSub').textContent = avg ? `kg DM/ha · ${avg.area.toFixed(1)} ha in round` : '';
+  const leftHa = toGraze.reduce((a,i) => a + i.p.area, 0);
+  const above = toGraze.filter(i => i.p.cover >= pre).length;
+  document.getElementById('walkLeftOut').textContent = toGraze.length + ' paddocks';
+  document.getElementById('walkLeftSub').textContent = `${leftHa.toFixed(1)} ha · ${above} at/above ${pre}`;
+
+  // feed wedge (inline SVG)
+  const n = toGraze.length, W = Math.max(n * 9, 100), H = 110;
+  const y = v => H - 8 - (v / maxCover) * (H - 20);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;" preserveAspectRatio="none">`;
+  toGraze.forEach((i, ix) => { const top = y(i.p.cover); svg += `<rect x="${ix*9+1}" y="${top}" width="7" height="${H-8-top}" rx="1" fill="${i.p.cover >= pre ? 'var(--green)' : 'var(--blue)'}"></rect>`; });
+  svg += `<line x1="0" x2="${W}" y1="${y(pre)}" y2="${y(pre)}" stroke="var(--green)" stroke-width="0.6" stroke-dasharray="3 2"></line>`;
+  if(post < maxCover) svg += `<line x1="0" x2="${W}" y1="${y(post)}" y2="${y(post)}" stroke="var(--rust)" stroke-width="0.6" stroke-dasharray="3 2"></line>`;
+  svg += '</svg>';
+  document.getElementById('walkWedge').innerHTML = n ? svg + `<div style="display:flex; justify-content:space-between; font-size:10px; color:var(--ink-soft); font-family:'IBM Plex Mono',monospace; margin-top:4px;"><span>highest</span><span>green line ${pre} · red line ${post}</span><span>lowest</span></div>` : '<div style="font-size:12px; color:var(--ink-soft);">Everything measured has been grazed.</div>';
+
+  const row = (i, isGrazed) => {
+    const p = i.p, avail = Math.max(0, p.cover - post);
+    const stale = i.measured < wd;
+    const sub = [`${avail} avail`, `${p.area.toFixed(2)} ha`];
+    if(!isGrazed && i.lastBefore) sub.push('last grazed ' + fmtShort(i.lastBefore));
+    if(growthBy[i.k] !== undefined) sub.push((growthBy[i.k] >= 0 ? '+' : '') + Math.round(growthBy[i.k]) + '/day');
+    return `<div class="walk-row${isGrazed ? ' grazed' : ''}">
+      <div class="wp">${escapeHtml(i.k.toUpperCase())}</div>
+      <div class="wmid"><div class="wcover">${Math.round(p.cover)} <span style="font-size:11px; font-weight:400; color:var(--ink-soft);">kg DM/ha</span></div>
+        <div class="wbar" style="width:${Math.max(4, Math.round(p.cover / maxCover * 100))}%;"></div>
+        <div class="wsub" style="margin-top:4px;">${sub.join(' · ')}</div></div>
+      <div class="wright">${isGrazed ? `<span class="badge s">GRAZED</span><div style="margin-top:4px;">${fmtShort(i.grazedOn)}</div>` : (p.cover >= pre ? '<span class="badge g">READY</span>' : '')}${stale ? `<div style="margin-top:4px;"><span class="badge a">MEASURED ${fmtShort(i.measured).toUpperCase()}</span></div>` : ''}</div>
+    </div>`;
+  };
+  document.getElementById('walkList').innerHTML = toGraze.map(i => row(i, false)).join('') + grazed.map(i => row(i, true)).join('') || '<div style="padding:12px 0; font-size:13px; color:var(--ink-soft);">No paddocks in this walk.</div>';
+  document.getElementById('walkOutNote').textContent = outNames.length ? 'Out of the round: ' + outNames.map(x => x.toUpperCase()).join(', ') : '';
+  if(dates.length > 1){
+    document.getElementById('walkTrend').innerHTML = 'Farm average cover by walk<br>' + dates.map(d => { const a = walkAvgCover(walks[d], d); return `${fmtShort(d)}: ${a ? Math.round(a.avg) : '–'}`; }).join(' &nbsp;·&nbsp; ');
+  } else document.getElementById('walkTrend').textContent = '';
+}
+document.getElementById('walkSelect').addEventListener('change', renderWalk);
+
+// --- Walk import ---
+let pendingWalk = null;
+function handleWalkText(text){
+  const prev = document.getElementById('walkPreview'), st = document.getElementById('walkImportStatus');
+  const res = parseHawkeyeCsv(text);
+  if(!res.ok){ pendingWalk = null; prev.style.display = 'none'; st.textContent = res.msg; st.style.color = 'var(--rust)'; return; }
+  pendingWalk = res; st.textContent = '';
+  document.getElementById('walkPreviewText').textContent = `Found ${Object.keys(res.paddocks).length} paddocks${res.drains ? ' + drains/tracks (' + res.drains.area + ' ha)' : ''}.`;
+  document.getElementById('walkDateInput').value = res.maxDate || todayKeyReal();
+  prev.style.display = 'block';
+}
+document.getElementById('walkFile').addEventListener('change', async (e) => {
+  const f = e.target.files && e.target.files[0]; if(!f) return;
+  handleWalkText(await f.text());
+});
+document.getElementById('walkPaste').addEventListener('input', (e) => { if(e.target.value.trim()) handleWalkText(e.target.value); });
+document.getElementById('walkImportBtn').addEventListener('click', () => {
+  const st = document.getElementById('walkImportStatus');
+  const date = document.getElementById('walkDateInput').value;
+  if(!pendingWalk || !date){ st.textContent = 'Choose a file and a walk date first'; st.style.color = 'var(--rust)'; return; }
+  const replaced = !!walks[date];
+  walks[date] = { date, importedAt: Date.now(), paddocks: pendingWalk.paddocks, drains: pendingWalk.drains };
+  savePasture();
+  st.textContent = (replaced ? 'Replaced the walk for ' : 'Imported the walk for ') + formatDateNice(date);
+  st.style.color = 'var(--green)';
+  pendingWalk = null; document.getElementById('walkPreview').style.display = 'none';
+  document.getElementById('walkFile').value = ''; document.getElementById('walkPaste').value = '';
+  document.getElementById('walkSelect').value = date;
+  renderWalk(); updateGrazingTotals();
+});
+
+// --- Settings tab ---
+function renderSettings(){
+  const dEl = document.getElementById('exclDate');
+  if(!dEl.value) dEl.value = todayKeyReal();
+  const d = dEl.value;
+  document.querySelectorAll('#exclGrid .paddock-btn').forEach(b => b.classList.toggle('excluded', isExcludedOn(pk(b.dataset.p), d)));
+  const ex = excludedOnDate(d);
+  document.getElementById('exclSummary').textContent = `On ${formatDateNice(d)}: round area ${inRoundHa(d).toFixed(2)} ha` + (ex.length ? ` (out: ${ex.map(x => x.toUpperCase()).join(', ')})` : '');
+  document.getElementById('exclList').innerHTML = exclusions.slice().sort((a,b) => b.from.localeCompare(a.from)).map(x => {
+    const i = exclusions.indexOf(x);
+    return `<div class="excl-item"><span>${escapeHtml(x.paddock.toUpperCase())} · out from ${fmtShort(x.from)}${x.to ? ' · back ' + fmtShort(x.to) : ''}</span><button data-excl-del="${i}" title="Remove">✕</button></div>`;
+  }).join('');
+  document.querySelectorAll('[data-excl-del]').forEach(b => b.addEventListener('click', () => {
+    exclusions.splice(parseInt(b.dataset.exclDel, 10), 1); savePasture(); renderSettings(); updateGrazingTotals();
+  }));
+  document.getElementById('preTarget').value = pastureSettings.pre;
+  document.getElementById('postTarget').value = pastureSettings.post;
+}
+(function buildExclGrid(){
+  const grid = document.getElementById('exclGrid');
+  PADDOCKS.slice().sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true})).forEach(p => {
+    const btn = document.createElement('div'); btn.className = 'paddock-btn'; btn.textContent = p; btn.dataset.p = p;
+    btn.addEventListener('click', () => {
+      const d = document.getElementById('exclDate').value || todayKeyReal(), k = pk(p);
+      if(isExcludedOn(k, d)){
+        const open = exclusions.find(x => x.paddock === k && x.from <= d && (!x.to || d < x.to));
+        if(open){ if(open.from === d) exclusions.splice(exclusions.indexOf(open), 1); else open.to = d; }
+      } else {
+        exclusions.push({ paddock: k, from: d, to: null });
+      }
+      savePasture(); renderSettings(); updateGrazingTotals();
+    });
+    grid.appendChild(btn);
+  });
+})();
+document.getElementById('exclDate').addEventListener('change', renderSettings);
+['preTarget','postTarget'].forEach(id => document.getElementById(id).addEventListener('change', () => {
+  const pre = parseFloat(document.getElementById('preTarget').value), post = parseFloat(document.getElementById('postTarget').value);
+  if(pre > 0) pastureSettings.pre = pre; if(post > 0) pastureSettings.post = post;
+  savePasture(); updateGrazingTotals();
+}));
+document.querySelector('[data-card="walkimport"]').classList.add('collapsed');
+
+// --- Feed offered (Today) ---
+function feedOfferedHtml(){
+  const post = pastureSettings.post, d = selectedDateKey;
+  const lines = []; let missing = false;
+  const num = id => parseFloat(document.getElementById(id).value) || 0;
+  const calc = (label, cows, slots) => {
+    let ha = 0, kg = 0, used = [];
+    slots.forEach(s => {
+      if(!s.p || !s.ha) return;
+      const w = latestWalkWith(pk(s.p), d);
+      ha += s.ha;
+      if(!w){ missing = true; used.push(`${s.p}: no walk`); return; }
+      const av = Math.max(0, w.data.cover - post);
+      kg += s.ha * av; used.push(`${s.p}: ${Math.round(w.data.cover)} (${fmtShort(w.date)})`);
+    });
+    if(!ha) return;
+    const perCow = cows > 0 ? (kg / cows).toFixed(1) + ' kg DM/cow' : 'no cow count';
+    lines.push(`<div style="padding:7px 0; border-bottom:1px solid var(--line);"><div><strong>${label}</strong> · ${cows || '–'} cows · ${ha.toFixed(2)} ha → <strong>${perCow}</strong></div><div style="font-size:11px; color:var(--ink-soft); font-family:'IBM Plex Mono',monospace;">${Math.round(kg).toLocaleString()} kg DM offered · cover ${used.join(', ')}</div></div>`);
+  };
+  MAIN_MOBS.forEach(m => {
+    const slots = mobSlotPaddock[m.id].map((p, i) => ({ p, ha: mobSlotHa[m.id][i] }));
+    calc(m.label, num(m.id), slots);
+  });
+  const stripCows = { peno: num('penoField'), oad: num('oadField'), newMoms: stripState.newMoms.count || 0, colostrum: stripState.colostrum.count || 0 };
+  ALL_STRIP_MOBS.forEach(m => calc(m.label, stripCows[m.id], [{ p: stripState[m.id].paddock, ha: (stripState[m.id].plannedArea || 0) / 10000 }]));
+  if(!Object.keys(walks).length) return '<div style="color:var(--ink-soft);">Import a pasture walk (Walk tab) to see this.</div>';
+  if(!lines.length) return '<div style="color:var(--ink-soft);">Enter paddocks and areas above to see feed on offer.</div>';
+  return lines.join('') + (missing ? '<div style="font-size:11px; color:var(--rust); margin-top:6px;">Some paddocks have no walk reading on or before this date and are counted as zero feed.</div>' : '');
+}
+function updateFeedOffered(){ document.getElementById('feedOut').innerHTML = feedOfferedHtml(); }
+document.getElementById('feedToggle').addEventListener('click', () => {
+  document.getElementById('feedSection').classList.toggle('open');
+  document.getElementById('feedChevron').textContent = document.getElementById('feedSection').classList.contains('open') ? '▴' : '▾';
+  updateFeedOffered();
+});
+
+
 // ---------- PADDOCK LOOKUP (History) ----------
 const lookupSelected = new Set();
 function grazingHistoryForPaddock(p){
@@ -1574,13 +1995,15 @@ function renderLookupResults(){
   const sorted = Array.from(lookupSelected).sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true}));
   out.innerHTML = sorted.map(p => {
     const hits = grazingHistoryForPaddock(p);
-    if(!hits.length) return `<div style="margin-bottom:14px;"><div style="font-family:'Roboto Slab',serif; font-size:15px;">Paddock ${escapeHtml(String(p))}</div><div style="font-size:12px; color:var(--ink-soft);">No grazing recorded</div></div>`;
+    const cw = latestWalkWith(pk(p));
+    const coverLine = cw ? `<div style="font-size:12px; color:var(--ink-soft); margin-bottom:4px;">Cover ${Math.round(cw.data.cover)} kg DM/ha (walk ${fmtShort(cw.date)}) · ${cw.data.area.toFixed(2)} ha</div>` : '';
+    if(!hits.length) return `<div style="margin-bottom:14px;"><div style="font-family:'Roboto Slab',serif; font-size:15px;">Paddock ${escapeHtml(String(p))}</div><div style="font-size:12px; color:var(--ink-soft);">No grazing recorded</div>${coverLine}</div>`;
     const last = hits[hits.length-1];
     const ago = daysBetweenKeys(last.date, today);
     const agoTxt = ago === 0 ? 'today' : ago === 1 ? 'yesterday' : ago + ' days ago';
     const rows = hits.slice().reverse().map(h => `<div class="kline-history-item"><span>${formatDateNice(h.date)}</span><span>${escapeHtml(h.mobs.join(', '))}</span></div>`).join('');
     return `<div style="margin-bottom:14px;"><div style="font-family:'Roboto Slab',serif; font-size:15px;">Paddock ${escapeHtml(String(p))}</div>
-      <div style="font-size:12px; color:var(--ink-soft); margin-bottom:4px;">Last grazed ${formatDateNice(last.date)} (${agoTxt}) · ${hits.length} day${hits.length===1?'':'s'} recorded</div>${rows}</div>`;
+      <div style="font-size:12px; color:var(--ink-soft); margin-bottom:4px;">Last grazed ${formatDateNice(last.date)} (${agoTxt}) · ${hits.length} day${hits.length===1?'':'s'} recorded</div>${coverLine}${rows}</div>`;
   }).join('');
 }
 (function buildLookupGrid(){
