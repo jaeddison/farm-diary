@@ -130,6 +130,7 @@
   .walk-row.grazed .wbar{ background:var(--ink-soft); }
   .badge{ display:inline-block; font-family:'IBM Plex Mono',monospace; font-size:10px; font-weight:600; letter-spacing:0.05em; padding:2px 6px; border-radius:4px; }
   .badge.g{ background:var(--green-soft); color:var(--green); } .badge.s{ background:var(--ink-soft); color:#fff; } .badge.a{ background:var(--amber-soft); color:var(--amber); }
+  .supp-row{ border:1px solid var(--line); border-radius:8px; padding:10px; margin:10px 0; background:#fff; }
   .excl-item{ display:flex; justify-content:space-between; align-items:center; font-size:12px; padding:7px 0; border-bottom:1px solid var(--line); font-family:'IBM Plex Mono',monospace; color:var(--ink-soft); }
   .excl-item button{ background:none; border:none; color:var(--rust); font-size:16px; cursor:pointer; }
 </style>
@@ -177,6 +178,14 @@
         <div class="field-row">
           <div class="field"><label>Somatic cell count</label><input type="number" id="sccField" inputmode="numeric"></div>
           <div class="field"><label>Kg solids / cow</label><div class="readonly-out" id="solidsPerCowOut">–</div></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Fat %</label><input type="number" id="fatField" inputmode="decimal" step="0.01"></div>
+          <div class="field"><label>Protein %</label><input type="number" id="proField" inputmode="decimal" step="0.01"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Milk urea (MU)</label><input type="number" id="muField" inputmode="decimal" step="0.1"></div>
+          <div class="field"></div>
         </div>
       </div>
     </div>
@@ -286,6 +295,24 @@
       </div>
     </div>
 
+    <div class="card" data-card="supplements">
+      <div class="card-head"><span class="dot g"></span><h2>Supplements</h2><span class="chevron">▾</span></div>
+      <div class="card-body">
+        <div class="field"><label>PKE (kg per cow per day)</label><input type="number" id="pkeField" inputmode="decimal" step="0.1"></div>
+        <div id="pkeHint" style="font-size:12px; color:var(--ink-soft); margin:-4px 0 12px;"></div>
+        <label style="font-size:12px; color:var(--ink-soft); display:block; margin-bottom:6px;">PK trailer (ad lib)</label>
+        <div style="display:flex; gap:18px; margin-bottom:6px;">
+          <label style="display:flex; align-items:center; gap:8px; font-size:14px;"><input type="checkbox" id="trailerOad"> OAD</label>
+          <label style="display:flex; align-items:center; gap:8px; font-size:14px;"><input type="checkbox" id="trailerPeno"> PENO</label>
+        </div>
+        <div id="trailerHint" style="font-size:12px; color:var(--ink-soft); margin-bottom:12px;"></div>
+        <div id="suppExtras"></div>
+        <datalist id="suppTypes"></datalist>
+        <button class="copy-btn" id="suppAddBtn" style="background:var(--green); margin-top:4px;">+ Add supplement (silage, hay…)</button>
+        <div id="suppSummary" style="font-size:13px; margin-top:12px;"></div>
+      </div>
+    </div>
+
     <div class="card" data-card="notes">
       <div class="card-head"><span class="dot r"></span><h2>Notes</h2><span class="chevron">▾</span></div>
       <div class="card-body"><textarea id="notesField" placeholder="Anything worth remembering — first cut results, contractor visit, calving..."></textarea></div>
@@ -372,6 +399,35 @@
     <div class="heatmap" id="heatmap"></div>
     <div class="heatmap-legend" id="heatmapLegend"></div>
     <div id="entryList"></div>
+
+    <div class="card" data-card="milkimport" style="margin-top:12px;">
+      <div class="card-head"><span class="dot g"></span><h2>Import milk pickups</h2><span class="chevron">▾</span></div>
+      <div class="card-body">
+        <div style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Choose the milk company's 10-day CSV. It fills in litres, solids, SCC, fat %, protein % and milk urea by pickup date.</div>
+        <input type="file" id="milkFile" accept=".csv,text/csv,text/plain" style="width:100%; margin-bottom:8px;">
+        <textarea id="milkPaste" style="min-height:70px;" placeholder="…or paste the CSV text here"></textarea>
+        <div id="milkPreview" style="display:none; margin-top:10px;">
+          <div id="milkPreviewText" style="font-size:13px; margin-bottom:8px;"></div>
+          <div id="milkConflictWrap" class="field" style="display:none; margin-bottom:8px;"><label>Where the report differs from what you typed</label>
+            <select id="milkConflictMode" style="width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:15px;"><option value="mine">Keep mine</option><option value="report">Use the report</option></select></div>
+          <button class="save-btn" id="milkImportBtn" style="width:100%;">Import</button>
+        </div>
+        <div class="status-msg" id="milkImportStatus"></div>
+      </div>
+    </div>
+
+    <div class="card" data-card="mufeed" style="margin-top:12px;">
+      <div class="card-head"><span class="dot a"></span><h2>Milk urea vs feed</h2><span class="chevron">▾</span></div>
+      <div class="card-body">
+        <div class="export-row">
+          <div class="field"><label>From</label><input type="date" id="muFrom"></div>
+          <div class="field"><label>To</label><input type="date" id="muTo"></div>
+        </div>
+        <div class="field"><label>Average feed over the last</label>
+          <select id="muAvg" style="width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:15px;"><option value="1">1 day (pickup day)</option><option value="2" selected>2 days</option><option value="3">3 days</option></select></div>
+        <div id="muOut" style="margin-top:8px;"></div>
+      </div>
+    </div>
 
     <div class="card" data-card="export" style="margin-top:20px;">
       <div class="card-head"><span class="dot b"></span><h2>Export data</h2><span class="chevron">▾</span></div>
@@ -549,6 +605,12 @@ const STORAGE_KEY = 'farmDiaryEntries';
 const KLINE_KEY = 'farmDiaryKLine';
 const ROUND_START_KEY = 'farmDiaryRoundStart';
 const TOTAL_FARM_HA = 369;
+let suppState = { pke:'', trailers:{ oad:null, peno:null }, extras:[] };
+const SUPP_MOBS = [
+  { id:'herd1', label:'Herd 1' }, { id:'herd2', label:'Herd 2' }, { id:'herd3', label:'Herd 3' },
+  { id:'oad', label:'OAD' }, { id:'peno', label:'PENO' }, { id:'newMoms', label:'New Moms' }, { id:'colostrum', label:'Colostrum' }
+];
+const ONCE_A_DAY = ['oad', 'peno']; // one milking, so half the PKE
 const WALKS_KEY = 'farmDiaryWalks';
 const EXCL_KEY = 'farmDiaryExclusions';
 const PASTURE_SET_KEY = 'farmDiaryPastureSettings';
@@ -721,7 +783,7 @@ function switchTab(tab){
   else if(tab === 'kline'){ klineView.classList.add('active'); tabKlineBtn.classList.add('active'); renderKline(); }
   else if(tab === 'walk'){ walkView.classList.add('active'); tabWalkBtn.classList.add('active'); renderWalk(); }
   else if(tab === 'settings'){ settingsView.classList.add('active'); tabSettingsBtn.classList.add('active'); renderSettings(); }
-  else { historyView.classList.add('active'); tabHistoryBtn.classList.add('active'); renderHistory(); }
+  else { historyView.classList.add('active'); tabHistoryBtn.classList.add('active'); renderHistory(); renderMuFeed(); }
 }
 document.querySelectorAll('.card-head').forEach(head => head.addEventListener('click', () => head.closest('.card').classList.toggle('collapsed')));
 document.querySelector('[data-card="export"] .card-head').classList.add('collapsed');
@@ -1182,7 +1244,8 @@ function updateGrazingTotals(){
 
 // ---------- LOAD DATE ----------
 function resetFormBlank(){
-  ['milkLitres','milkSolidsTotal','sccField','herd1','herd2','herd3','oadField','penoField','rainfall','tempHigh','tempLow','srpTarget','notesField'].forEach(id => document.getElementById(id).value = '');
+  suppState = { pke:'', trailers:{ oad:null, peno:null }, extras:[] };
+  ['milkLitres','milkSolidsTotal','sccField','fatField','proField','muField','herd1','herd2','herd3','oadField','penoField','rainfall','tempHigh','tempLow','srpTarget','notesField'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('skipCollectionField').checked = false;
   document.getElementById('milkLitres').disabled = false;
   document.getElementById('milkSolidsTotal').disabled = false;
@@ -1202,10 +1265,14 @@ function loadDateIntoForm(){
   document.getElementById('headerDate').textContent = formatDateNice(selectedDateKey);
   document.getElementById('entryDateLabel').textContent = formatDateNice(selectedDateKey);
   const e = entries[selectedDateKey];
+  if(e && e.supplements) loadSuppFromEntry(e.supplements);
   if(e){
     document.getElementById('milkLitres').value = e.milkLitres ?? '';
     document.getElementById('milkSolidsTotal').value = e.milkSolidsTotal ?? '';
     document.getElementById('sccField').value = e.scc ?? '';
+    document.getElementById('fatField').value = e.fatPct ?? '';
+    document.getElementById('proField').value = e.proPct ?? '';
+    document.getElementById('muField').value = e.mu ?? '';
     document.getElementById('herd1').value = e.herd1 ?? '';
     document.getElementById('herd2').value = e.herd2 ?? '';
     document.getElementById('herd3').value = e.herd3 ?? '';
@@ -1245,6 +1312,7 @@ function loadDateIntoForm(){
     // values that could get mistaken for real entered data.
   }
   ALL_STRIP_MOBS.forEach(m => refreshStripTally(m.id));
+  renderSupp();
   updateSolidsPerCow(); updateGrazingTotals(); renderTrends(); renderRoundTotals();
 }
 loadDateIntoForm();
@@ -1275,12 +1343,16 @@ function persistCurrentEntry(){
   });
 
   const skipChecked = document.getElementById('skipCollectionField').checked;
-  entries[key] = {
+  entries[key] = Object.assign({}, entries[key] || {}, {
     date: key,
     skipCollection: skipChecked,
     milkLitres: skipChecked ? null : (parseFloat(document.getElementById('milkLitres').value) || null),
     milkSolidsTotal: skipChecked ? null : (parseFloat(document.getElementById('milkSolidsTotal').value) || null),
     scc: parseFloat(document.getElementById('sccField').value) || null,
+    fatPct: parseFloat(document.getElementById('fatField').value) || null,
+    proPct: parseFloat(document.getElementById('proField').value) || null,
+    mu: parseFloat(document.getElementById('muField').value) || null,
+    supplements: suppToStore(),
     herd1: parseFloat(document.getElementById('herd1').value) || null,
     herd2: parseFloat(document.getElementById('herd2').value) || null,
     herd3: parseFloat(document.getElementById('herd3').value) || null,
@@ -1297,7 +1369,7 @@ function persistCurrentEntry(){
     mobPaddocks: mobPaddocksSnapshot,
     stripGrazers: stripSnapshot,
     notes: document.getElementById('notesField').value || ''
-  };
+  });
   saveEntries(entries);
   queueCloudPush();
 
@@ -1320,7 +1392,7 @@ function scheduleAutosave(){
   autosaveTimer = setTimeout(persistCurrentEntry, 700);
 }
 // Debounced autosave for free-typed fields (waits for a pause in typing)
-['milkLitres','milkSolidsTotal','sccField','herd1','herd2','herd3','oadField','penoField','rainfall','tempHigh','tempLow','srpTarget','notesField'].forEach(id => {
+['milkLitres','milkSolidsTotal','sccField','fatField','proField','muField','herd1','herd2','herd3','oadField','penoField','rainfall','tempHigh','tempLow','srpTarget','notesField'].forEach(id => {
   document.getElementById(id).addEventListener('input', scheduleAutosave);
 });
 document.querySelectorAll('[data-strip-area]').forEach(el => el.addEventListener('input', scheduleAutosave));
@@ -1934,7 +2006,8 @@ function feedOfferedHtml(){
   const post = pastureSettings.post, d = selectedDateKey;
   const lines = []; let missing = false;
   const num = id => parseFloat(document.getElementById(id).value) || 0;
-  const calc = (label, cows, slots) => {
+  const eff = effSupp(d), extrasNow = suppExtrasFor(d);
+  const calc = (label, cows, slots, mobId) => {
     let ha = 0, kg = 0, used = [];
     slots.forEach(s => {
       if(!s.p || !s.ha) return;
@@ -1945,15 +2018,16 @@ function feedOfferedHtml(){
       kg += s.ha * av; used.push(`${s.p}: ${Math.round(w.data.cover)} (${fmtShort(w.date)})`);
     });
     if(!ha) return;
-    const perCow = cows > 0 ? (kg / cows).toFixed(1) + ' kg DM/cow' : 'no cow count';
+    let perCow = cows > 0 ? (kg / cows).toFixed(1) + ' kg DM/cow' : 'no cow count';
+    if(cows > 0 && mobId){ const sp = suppDmPerCow(mobId, eff, extrasNow); if(sp.total > 0) perCow += ` + ${sp.total.toFixed(1)} supplement = ${((kg / cows) + sp.total).toFixed(1)} kg DM/cow total`; }
     lines.push(`<div style="padding:7px 0; border-bottom:1px solid var(--line);"><div><strong>${label}</strong> · ${cows || '–'} cows · ${ha.toFixed(2)} ha → <strong>${perCow}</strong></div><div style="font-size:11px; color:var(--ink-soft); font-family:'IBM Plex Mono',monospace;">${Math.round(kg).toLocaleString()} kg DM offered · cover ${used.join(', ')}</div></div>`);
   };
   MAIN_MOBS.forEach(m => {
     const slots = mobSlotPaddock[m.id].map((p, i) => ({ p, ha: mobSlotHa[m.id][i] }));
-    calc(m.label, num(m.id), slots);
+    calc(m.label, num(m.id), slots, m.id);
   });
   const stripCows = { peno: num('penoField'), oad: num('oadField'), newMoms: stripState.newMoms.count || 0, colostrum: stripState.colostrum.count || 0 };
-  ALL_STRIP_MOBS.forEach(m => calc(m.label, stripCows[m.id], [{ p: stripState[m.id].paddock, ha: (stripState[m.id].plannedArea || 0) / 10000 }]));
+  ALL_STRIP_MOBS.forEach(m => calc(m.label, stripCows[m.id], [{ p: stripState[m.id].paddock, ha: (stripState[m.id].plannedArea || 0) / 10000 }], m.id));
   if(!Object.keys(walks).length) return '<div style="color:var(--ink-soft);">Import a pasture walk (Walk tab) to see this.</div>';
   if(!lines.length) return '<div style="color:var(--ink-soft);">Enter paddocks and areas above to see feed on offer.</div>';
   return lines.join('') + (missing ? '<div style="font-size:11px; color:var(--rust); margin-top:6px;">Some paddocks have no walk reading on or before this date and are counted as zero feed.</div>' : '');
@@ -1965,6 +2039,307 @@ document.getElementById('feedToggle').addEventListener('click', () => {
   updateFeedOffered();
 });
 
+
+// ---------- MILK PICKUP IMPORT (milk company CSV) ----------
+function numC(s){ const v = parseFloat(String(s === undefined || s === null ? '' : s).replace(/,/g, '').trim()); return isNaN(v) ? null : v; }
+function parseMilkCsv(text){
+  const rows = parseCsv(text);
+  if(rows.length < 2) return { ok:false, msg:'That doesn\'t look like a milk pickup CSV (no rows found)' };
+  const head = rows[0].map(h => h.trim().toLowerCase());
+  const ix = name => head.indexOf(name);
+  const iDate = ix('date'), iVol = ix('vol (l)'), iMs = ix('ms (kg)'), iScc = ix('scc'), iFat = ix('fat %'), iPro = ix('pro %'), iMu = ix('mu');
+  if([iDate, iVol, iMs, iScc, iFat, iPro, iMu].some(i => i < 0)) return { ok:false, msg:'Couldn\'t find the expected columns (Date, Vol (L), MS (kg), SCC, Fat %, Pro %, MU)' };
+  const byDate = {};
+  rows.slice(1).forEach(r => {
+    const dm = (r[iDate] || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if(!dm) return; // skips the Average row
+    const key = dm[3] + '-' + dm[2].padStart(2,'0') + '-' + dm[1].padStart(2,'0');
+    (byDate[key] = byDate[key] || []).push({ vol:numC(r[iVol]), ms:numC(r[iMs]), scc:numC(r[iScc]), fat:numC(r[iFat]), pro:numC(r[iPro]), mu:numC(r[iMu]) });
+  });
+  const days = {};
+  Object.keys(byDate).forEach(key => {
+    const ps = byDate[key];
+    const litres = ps.some(p => p.vol !== null) ? ps.reduce((a,p) => a + (p.vol || 0), 0) : null;
+    const pending = ps.some(p => p.vol !== null && p.ms === null); // lab results not back for at least one pickup
+    const d = { litres, pending, ms:null, scc:null, fat:null, pro:null, mu:null, pickups: ps.length };
+    if(!pending){
+      d.ms = ps.some(p => p.ms !== null) ? Math.round(ps.reduce((a,p) => a + (p.ms || 0), 0) * 10) / 10 : null;
+      const wavg = f => { const w = ps.filter(p => p[f] !== null); if(!w.length) return null; const tw = w.reduce((a,p) => a + (p.vol || 1), 0); return w.reduce((a,p) => a + p[f] * (p.vol || 1), 0) / tw; };
+      const scc = wavg('scc'); d.scc = scc === null ? null : Math.round(scc >= 1000 ? scc / 1000 : scc);
+      const fat = wavg('fat'), pro = wavg('pro'), mu = wavg('mu');
+      d.fat = fat === null ? null : Math.round(fat * 100) / 100; d.pro = pro === null ? null : Math.round(pro * 100) / 100; d.mu = mu === null ? null : Math.round(mu * 10) / 10;
+    }
+    days[key] = d;
+  });
+  if(!Object.keys(days).length) return { ok:false, msg:'No pickup rows found in that file' };
+  return { ok:true, days };
+}
+const MILK_FIELDS = [
+  { f:'milkLitres', src:'litres', label:'litres', tol:0.5 },
+  { f:'milkSolidsTotal', src:'ms', label:'solids', tol:0.5 },
+  { f:'scc', src:'scc', label:'SCC', tol:0.5 },
+  { f:'fatPct', src:'fat', label:'fat %', tol:0.005 },
+  { f:'proPct', src:'pro', label:'protein %', tol:0.005 },
+  { f:'mu', src:'mu', label:'MU', tol:0.05 }
+];
+let pendingMilk = null;
+function planMilkImport(days){
+  const fills = [], same = [], conflicts = [];
+  Object.keys(days).sort().forEach(key => {
+    const e = entries[key] || {};
+    MILK_FIELDS.forEach(m => {
+      const nv = days[key][m.src]; if(nv === null || nv === undefined) return;
+      const ov = e[m.f];
+      if(ov === null || ov === undefined || ov === '') fills.push({ key, m, nv });
+      else if(Math.abs(ov - nv) <= m.tol) same.push({ key, m });
+      else conflicts.push({ key, m, ov, nv });
+    });
+  });
+  return { fills, same, conflicts };
+}
+function handleMilkText(text){
+  const prev = document.getElementById('milkPreview'), st = document.getElementById('milkImportStatus');
+  const res = parseMilkCsv(text);
+  if(!res.ok){ pendingMilk = null; prev.style.display = 'none'; st.textContent = res.msg; st.style.color = 'var(--rust)'; return; }
+  st.textContent = '';
+  const plan = planMilkImport(res.days);
+  pendingMilk = { days: res.days, plan };
+  const keys = Object.keys(res.days).sort();
+  const pend = keys.filter(k => res.days[k].pending);
+  let html = `<strong>${keys.length} days</strong> (${fmtShort(keys[0])} – ${fmtShort(keys[keys.length-1])}): ${plan.fills.length} values to fill in, ${plan.same.length} already match, ${plan.conflicts.length} differ.`;
+  if(pend.length) html += `<div style="color:var(--amber); margin-top:4px;">Lab results not back yet for ${pend.map(fmtShort).join(', ')} — only litres imported; import again later to add the rest.</div>`;
+  const multi = keys.filter(k => res.days[k].pickups > 1);
+  if(multi.length) html += `<div style="color:var(--ink-soft); margin-top:4px;">${multi.map(fmtShort).join(', ')} had more than one pickup — added together.</div>`;
+  if(plan.conflicts.length) html += '<div style="margin-top:8px;">' + plan.conflicts.map(c => `<div class="kline-history-item"><span>${fmtShort(c.key)} · ${c.m.label}</span><span>yours ${c.ov} → report ${c.nv}</span></div>`).join('') + '</div>';
+  document.getElementById('milkPreviewText').innerHTML = html;
+  document.getElementById('milkConflictWrap').style.display = plan.conflicts.length ? 'block' : 'none';
+  prev.style.display = 'block';
+}
+document.getElementById('milkFile').addEventListener('change', async (e) => { const f = e.target.files && e.target.files[0]; if(f) handleMilkText(await f.text()); });
+document.getElementById('milkPaste').addEventListener('input', (e) => { if(e.target.value.trim()) handleMilkText(e.target.value); });
+document.getElementById('milkImportBtn').addEventListener('click', () => {
+  const st = document.getElementById('milkImportStatus');
+  if(!pendingMilk){ st.textContent = 'Choose a file first'; st.style.color = 'var(--rust)'; return; }
+  const useReport = document.getElementById('milkConflictMode').value === 'report';
+  let applied = 0, skipped = 0;
+  const apply = (key, m, nv) => {
+    const e = entries[key] = Object.assign({ date: key }, entries[key] || {});
+    e[m.f] = nv; applied++;
+    if(m.f === 'milkLitres' && e.skipCollection) e.skipCollection = false; // real pickup data exists for this day
+  };
+  pendingMilk.plan.fills.forEach(x => apply(x.key, x.m, x.nv));
+  pendingMilk.plan.conflicts.forEach(x => { if(useReport) apply(x.key, x.m, x.nv); else skipped++; });
+  saveEntries(entries); queueCloudPush();
+  loadDateIntoForm(); renderHistory();
+  st.textContent = `Imported ${applied} value${applied === 1 ? '' : 's'}` + (skipped ? `, kept your ${skipped} differing number${skipped === 1 ? '' : 's'}` : '');
+  st.style.color = 'var(--green)';
+  pendingMilk = null; document.getElementById('milkPreview').style.display = 'none';
+  document.getElementById('milkFile').value = ''; document.getElementById('milkPaste').value = '';
+});
+document.querySelector('[data-card="milkimport"]').classList.add('collapsed');
+
+// ---------- SUPPLEMENTS (PKE / silage etc.) ----------
+// Only numbers actually entered are stored. A day with nothing entered *carries* the
+// most recent earlier value for display and totals, but nothing is written for it.
+function suppFormExplicit(){
+  const out = { trailers:{}, extras: suppState.extras };
+  const v = parseFloat(suppState.pke); if(suppState.pke !== '' && !isNaN(v)) out.pke = v;
+  ['oad','peno'].forEach(k => { if(suppState.trailers[k] !== null) out.trailers[k] = suppState.trailers[k]; });
+  return out;
+}
+function suppExplicitFor(k){
+  if(k === selectedDateKey) return suppFormExplicit();
+  return (entries[k] && entries[k].supplements) || null;
+}
+// Effective PKE rate / trailer flags for a date: that day's own entry, else the latest earlier one.
+function effSupp(dateKey){
+  const keys = Object.keys(entries).filter(k => k <= dateKey);
+  if(selectedDateKey <= dateKey && keys.indexOf(selectedDateKey) < 0) keys.push(selectedDateKey);
+  keys.sort().reverse();
+  const res = { pke:null, trailers:{ oad:null, peno:null } };
+  for(const k of keys){
+    const x = suppExplicitFor(k); if(!x) continue;
+    if(res.pke === null && x.pke !== undefined && x.pke !== null) res.pke = { v:x.pke, from:k };
+    ['oad','peno'].forEach(m => { if(res.trailers[m] === null && x.trailers && x.trailers[m] !== undefined && x.trailers[m] !== null) res.trailers[m] = { v:x.trailers[m], from:k }; });
+    if(res.pke !== null && res.trailers.oad !== null && res.trailers.peno !== null) break;
+  }
+  return res;
+}
+function suppExtrasFor(dateKey){
+  const x = suppExplicitFor(dateKey);
+  return ((x && x.extras) || []).map(e => ({ type: e.type || '', dm: e.dm !== undefined ? e.dm : (parseFloat(e.dmStr) || null), kgPerCow: e.kgPerCow !== undefined ? e.kgPerCow : (parseFloat(e.kg) || null), mobs: e.mobs || [] }));
+}
+function suppDmPerCow(mobId, eff, extras){
+  const pke = (eff.pke ? eff.pke.v : 0) * (ONCE_A_DAY.indexOf(mobId) >= 0 ? 0.5 : 1); // PKE taken as 100% DM
+  let ex = 0;
+  extras.forEach(x => { if(x.mobs.indexOf(mobId) >= 0) ex += (x.kgPerCow || 0) * ((x.dm || 0) / 100); });
+  return { pke, ex, total: pke + ex };
+}
+function mobCowCountForSupp(id){
+  const n = el => parseFloat(document.getElementById(el).value) || 0;
+  if(id === 'herd1' || id === 'herd2' || id === 'herd3') return n(id);
+  if(id === 'oad') return n('oadField'); if(id === 'peno') return n('penoField');
+  return stripState[id].count || 0;
+}
+function suppToStore(){
+  const out = {};
+  const v = parseFloat(suppState.pke); if(suppState.pke !== '' && !isNaN(v)) out.pke = v;
+  const tr = {}; ['oad','peno'].forEach(k => { if(suppState.trailers[k] !== null) tr[k] = suppState.trailers[k]; });
+  if(Object.keys(tr).length) out.trailers = tr;
+  const ex = suppState.extras.filter(x => (x.type || '').trim() || parseFloat(x.kg)).map(x => ({ type:(x.type || '').trim(), dm: parseFloat(x.dmStr) || null, kgPerCow: parseFloat(x.kg) || null, mobs: x.mobs.slice() }));
+  if(ex.length) out.extras = ex;
+  return Object.keys(out).length ? out : undefined;
+}
+function loadSuppFromEntry(sp){
+  suppState.pke = sp.pke !== undefined && sp.pke !== null ? String(sp.pke) : '';
+  suppState.trailers = { oad: sp.trailers && sp.trailers.oad !== undefined ? sp.trailers.oad : null, peno: sp.trailers && sp.trailers.peno !== undefined ? sp.trailers.peno : null };
+  suppState.extras = (sp.extras || []).map(e => ({ type:e.type || '', dmStr: e.dm !== null && e.dm !== undefined ? String(e.dm) : '', kg: e.kgPerCow !== null && e.kgPerCow !== undefined ? String(e.kgPerCow) : '', mobs: (e.mobs || []).slice() }));
+}
+function suppFeedDmForDay(dateKey){ /* total kg DM fed across herd that day (selected date uses live cow counts) */
+  const eff = effSupp(dateKey), extras = suppExtrasFor(dateKey);
+  let pke = 0, ex = 0;
+  SUPP_MOBS.forEach(m => { const c = dateKey === selectedDateKey ? mobCowCountForSupp(m.id) : cowsOnDate(dateKey, m.id); const d = suppDmPerCow(m.id, eff, extras); pke += c * d.pke; ex += c * d.ex; });
+  return { pke, ex };
+}
+function cowsOnDate(dateKey, id){
+  const e = entries[dateKey] || {};
+  if(id === 'herd1' || id === 'herd2' || id === 'herd3') return e[id] || 0;
+  if(id === 'oad') return e.oad || 0; if(id === 'peno') return e.peno || 0;
+  return id === 'newMoms' ? (e.newMomsCount || 0) : (e.colostrumCount || 0);
+}
+function renderSuppHints(){
+  const eff = effSupp(selectedDateKey), extras = suppExtrasFor(selectedDateKey);
+  const pkeEl = document.getElementById('pkeField');
+  pkeEl.placeholder = suppState.pke === '' && eff.pke ? String(eff.pke.v) : '';
+  let hint;
+  if(suppState.pke !== '') hint = 'Entered for this day — following days carry it until you change it.';
+  else if(eff.pke) hint = `Using ${eff.pke.v} kg/cow/day carried from ${fmtShort(eff.pke.from)}. Type a number to change it from this day.`;
+  else hint = 'No PKE entered yet.';
+  document.getElementById('pkeHint').textContent = hint;
+  ['oad','peno'].forEach(m => {
+    const cb = document.getElementById(m === 'oad' ? 'trailerOad' : 'trailerPeno');
+    const t = eff.trailers[m]; cb.checked = !!(t && t.v);
+  });
+  const carriedTr = ['oad','peno'].filter(m => suppState.trailers[m] === null && eff.trailers[m]).map(m => `${m.toUpperCase()} (from ${fmtShort(eff.trailers[m].from)})`);
+  document.getElementById('trailerHint').textContent = carriedTr.length ? 'Trailer status carried: ' + carriedTr.join(', ') + '. Tick or untick to change it from this day.' : '';
+  // summary
+  const lines = [];
+  if(eff.pke) lines.push(`PKE ${eff.pke.v} kg/cow/day (OAD &amp; PENO ${eff.pke.v / 2})`);
+  extras.forEach(x => {
+    if(!x.type && !x.kgPerCow) return;
+    const dmPc = (x.kgPerCow || 0) * ((x.dm || 0) / 100);
+    lines.push(`${escapeHtml(x.type || 'Supplement')}: ${x.kgPerCow || 0} kg fresh/cow @ ${x.dm || '?'}% DM = ${dmPc.toFixed(2)} kg DM/cow` + (x.dm ? '' : ' <span style="color:var(--rust);">(enter % DM)</span>'));
+  });
+  const tot = suppFeedDmForDay(selectedDateKey);
+  let html = lines.map(l => `<div style="padding:3px 0;">${l}</div>`).join('');
+  if(tot.pke + tot.ex > 0) html += `<div style="padding-top:6px; border-top:1px solid var(--line); margin-top:4px;"><strong>${Math.round(tot.pke + tot.ex).toLocaleString()} kg DM fed</strong> <span style="color:var(--ink-soft);">(PKE ${Math.round(tot.pke).toLocaleString()} · other ${Math.round(tot.ex).toLocaleString()}) across the cows entered above</span></div>`;
+  document.getElementById('suppSummary').innerHTML = html;
+  if(document.getElementById('feedSection').classList.contains('open')) updateFeedOffered();
+}
+function renderSupp(){
+  document.getElementById('pkeField').value = suppState.pke;
+  const box = document.getElementById('suppExtras'); box.innerHTML = '';
+  suppState.extras.forEach((x, i) => {
+    const row = document.createElement('div'); row.className = 'supp-row';
+    row.innerHTML = `<div class="field-row"><div class="field"><label>Supplement</label><input type="text" list="suppTypes" data-k="type" placeholder="e.g. Round bale silage"></div><div class="field"><label>% DM</label><input type="number" inputmode="decimal" data-k="dmStr" step="0.1"></div></div>
+      <div class="field-row"><div class="field"><label>kg fresh per cow</label><input type="number" inputmode="decimal" data-k="kg" step="0.1"></div><div class="field" style="display:flex; align-items:flex-end;"><button class="copy-btn" data-remove style="background:var(--rust); margin-top:0;">Remove</button></div></div>
+      <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px;" data-mobs></div>`;
+    row.querySelectorAll('input').forEach(inp => { inp.value = x[inp.dataset.k]; inp.addEventListener('input', () => { x[inp.dataset.k] = inp.value; scheduleAutosave(); renderSuppHints(); }); });
+    const chips = row.querySelector('[data-mobs]');
+    SUPP_MOBS.forEach(m => {
+      const c = document.createElement('div'); c.className = 'toggle-btn' + (x.mobs.indexOf(m.id) >= 0 ? ' active-g' : ''); c.textContent = m.label; c.style.cssText = 'flex:0 0 auto; padding:7px 10px;';
+      c.addEventListener('click', () => { const ix = x.mobs.indexOf(m.id); if(ix >= 0) x.mobs.splice(ix, 1); else x.mobs.push(m.id); c.classList.toggle('active-g'); touchAndPersist(); renderSuppHints(); });
+      chips.appendChild(c);
+    });
+    row.querySelector('[data-remove]').addEventListener('click', () => { suppState.extras.splice(i, 1); renderSupp(); touchAndPersist(); });
+    box.appendChild(row);
+  });
+  renderSuppHints();
+}
+document.getElementById('pkeField').addEventListener('input', (e) => { suppState.pke = e.target.value; scheduleAutosave(); renderSuppHints(); });
+[['trailerOad','oad'], ['trailerPeno','peno']].forEach(([id, m]) => document.getElementById(id).addEventListener('change', (e) => { suppState.trailers[m] = e.target.checked; touchAndPersist(); renderSuppHints(); }));
+document.getElementById('suppAddBtn').addEventListener('click', () => {
+  suppState.extras.push({ type:'', dmStr:'', kg:'', mobs: SUPP_MOBS.map(m => m.id) });
+  renderSupp();
+});
+// remember supplement names you've used, for the type-ahead
+function refreshSuppTypes(){
+  const names = new Set();
+  Object.keys(entries).forEach(k => { const x = entries[k].supplements; if(x && x.extras) x.extras.forEach(e => { if(e.type) names.add(e.type); }); });
+  document.getElementById('suppTypes').innerHTML = Array.from(names).map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
+}
+document.getElementById('suppAddBtn').addEventListener('click', refreshSuppTypes);
+
+// ---------- MILK UREA vs FEED (History) ----------
+// Herd-wide kg DM per cow for a day, rebuilt from what was logged: paddock areas x (latest walk cover - post-grazing target), plus supplements.
+function dayFeed(k){
+  const e = entries[k]; if(!e) return null;
+  const post = pastureSettings.post, eff = effSupp(k), extras = suppExtrasFor(k);
+  let cows = 0, pasture = 0, supp = 0, noWalk = false, noArea = false;
+  const addMob = (id, nCows, slots) => {
+    nCows = nCows || 0; if(nCows <= 0) return;
+    cows += nCows; supp += nCows * suppDmPerCow(id, eff, extras).total;
+    let any = false;
+    slots.forEach(s => {
+      if(!s.p || !s.ha) return; any = true;
+      const w = latestWalkWith(pk(s.p), k);
+      if(!w){ noWalk = true; return; }
+      pasture += s.ha * Math.max(0, w.data.cover - post);
+    });
+    if(!any) noArea = true;
+  };
+  MAIN_MOBS.forEach(m => {
+    const ps = normalizeSlotArray(e.mobPaddocks && e.mobPaddocks[m.id]), hs = normalizeSlotArray(e.mobAreas && e.mobAreas[m.id]);
+    addMob(m.id, e[m.id], ps.map((p, i) => ({ p, ha: hs[i] })));
+  });
+  const stripCount = { peno: e.peno, oad: e.oad, newMoms: e.newMomsCount, colostrum: e.colostrumCount };
+  ALL_STRIP_MOBS.forEach(m => { const sg = e.stripGrazers && e.stripGrazers[m.id]; addMob(m.id, stripCount[m.id], sg ? [{ p: sg.paddock, ha: (sg.plannedArea || 0) / 10000 }] : []); });
+  if(cows <= 0) return null;
+  return { cows, pastureKg: pasture, suppKg: supp, past: pasture / cows, sup: supp / cows, noWalk, noArea };
+}
+function pearson(xs, ys){
+  const n = xs.length; if(n < 4) return null;
+  const mx = xs.reduce((a,b)=>a+b,0)/n, my = ys.reduce((a,b)=>a+b,0)/n;
+  let sxy = 0, sxx = 0, syy = 0;
+  for(let i = 0; i < n; i++){ sxy += (xs[i]-mx)*(ys[i]-my); sxx += (xs[i]-mx)**2; syy += (ys[i]-my)**2; }
+  return sxx && syy ? sxy / Math.sqrt(sxx * syy) : null;
+}
+function renderMuFeed(){
+  const out = document.getElementById('muOut');
+  const avgDays = parseInt(document.getElementById('muAvg').value) || 1;
+  const from = document.getElementById('muFrom').value, to = document.getElementById('muTo').value;
+  const rows = [];
+  Object.keys(entries).sort().forEach(k => {
+    if(from && k < from) return; if(to && k > to) return;
+    const mu = entries[k].mu; if(!mu) return;
+    const fs = []; for(let i = 0; i < avgDays; i++){ const f = dayFeed(keyOffsetFrom(k, -i)); if(f) fs.push(f); }
+    if(!fs.length){ rows.push({ k, mu, none:true }); return; }
+    const av = f => fs.reduce((a, x) => a + x[f], 0) / fs.length;
+    rows.push({ k, mu, past: av('past'), sup: av('sup'), n: fs.length, flag: fs.some(x => x.noWalk || x.noArea) });
+  });
+  if(!rows.length){ out.innerHTML = '<div style="color:var(--ink-soft);">No milk urea readings in this range. Import a milk pickup CSV first.</div>'; return; }
+  const ok = rows.filter(r => !r.none);
+  let html = '';
+  if(!Object.keys(walks).length) html += '<div style="color:var(--rust); font-size:12px; margin-bottom:8px;">No pasture walks imported yet, so pasture kg/cow reads as zero. Supplements still count.</div>';
+  const withSup = ok.filter(r => r.sup > 0).length;
+  const stats = [];
+  const rP = pearson(ok.map(r => r.past), ok.map(r => r.mu)), rT = pearson(ok.map(r => r.past + r.sup), ok.map(r => r.mu)), rS = withSup >= 4 ? pearson(ok.map(r => r.sup), ok.map(r => r.mu)) : null;
+  const rl = (lab, r) => r === null ? '' : `<div>${lab}: <strong>r = ${r.toFixed(2)}</strong> <span style="color:var(--ink-soft);">(${Math.abs(r) < 0.3 ? 'weak' : Math.abs(r) < 0.6 ? 'moderate' : 'strong'} ${r < 0 ? 'negative' : 'positive'})</span></div>`;
+  html += `<div style="font-size:13px; padding:8px 0;">${rl('MU vs pasture kg DM/cow', rP)}${rl('MU vs total feed kg DM/cow', rT)}${rl('MU vs supplement kg DM/cow', rS)}${ok.length < 4 ? '<div style="color:var(--ink-soft);">Need at least 4 readings with feed data for a correlation.</div>' : '<div style="font-size:11px; color:var(--ink-soft); margin-top:4px;">r runs from -1 to +1 and only shows how closely the two move together, not that one causes the other. Needs a few weeks of data to mean much.</div>'}</div>`;
+  // chart: MU line and total feed line, each on its own scale
+  if(ok.length >= 2){
+    const W = 320, H = 120, P = 6;
+    const line = (vals, col) => { const mn = Math.min(...vals), mx = Math.max(...vals), sp = (mx - mn) || 1; return '<polyline fill="none" stroke="' + col + '" stroke-width="2" points="' + vals.map((v, i) => (P + i * (W - 2*P) / (vals.length - 1)).toFixed(1) + ',' + (H - P - (v - mn) / sp * (H - 2*P)).toFixed(1)).join(' ') + '"/>'; };
+    html += `<svg viewBox="0 0 ${W} ${H}" style="width:100%; background:#fff; border:1px solid var(--line); border-radius:8px;">${line(ok.map(r => r.mu), '#b5532a')}${line(ok.map(r => r.past + r.sup), '#3f7a3f')}</svg><div style="font-size:11px; color:var(--ink-soft); margin:4px 0 8px;"><span style="color:#b5532a;">■</span> Milk urea &nbsp; <span style="color:#3f7a3f;">■</span> Total feed kg DM/cow &nbsp; (each line scaled to its own range, oldest left)</div>`;
+  }
+  html += '<div style="overflow-x:auto;"><table style="width:100%; border-collapse:collapse; font-size:12px; font-family:\'IBM Plex Mono\',monospace;"><tr style="text-align:left; color:var(--ink-soft);"><th>Date</th><th>MU</th><th>Pasture</th><th>Suppl.</th><th>Total</th></tr>' +
+    rows.slice().reverse().map(r => r.none ? `<tr><td>${fmtShort(r.k)}</td><td>${r.mu}</td><td colspan="3" style="color:var(--ink-soft);">no herd data</td></tr>` : `<tr style="border-top:1px solid var(--line);"><td>${fmtShort(r.k)}</td><td>${r.mu}</td><td>${r.past.toFixed(1)}${r.flag ? '*' : ''}</td><td>${r.sup.toFixed(1)}</td><td><strong>${(r.past + r.sup).toFixed(1)}</strong></td></tr>`).join('') + '</table></div>';
+  if(ok.some(r => r.flag)) html += '<div style="font-size:11px; color:var(--rust); margin-top:6px;">* Some mobs had cows but no paddock/area logged, or no walk reading on or before that date, so pasture is understated.</div>';
+  html += '<div style="font-size:11px; color:var(--ink-soft); margin-top:6px;">Feed is kg DM per cow offered (paddock area × (walk cover − post-grazing target) ÷ cows, plus supplements), not what was eaten.</div>';
+  out.innerHTML = html;
+}
+['muAvg','muFrom','muTo'].forEach(id => document.getElementById(id).addEventListener('change', renderMuFeed));
+(function(){ const t = todayKeyReal(); document.getElementById('muTo').value = t; document.getElementById('muFrom').value = keyOffsetFrom(t, -45); })();
 
 // ---------- PADDOCK LOOKUP (History) ----------
 const lookupSelected = new Set();
@@ -2108,6 +2483,10 @@ document.getElementById('excelExportBtn').addEventListener('click', () => {
       'Milk litres': e.skipCollection ? 'Skip day' : (e.milkLitres ?? ''),
       'Milk solids (kg)': e.skipCollection ? '' : (e.milkSolidsTotal ?? ''),
       'SCC': e.scc ?? '',
+      'PKE (kg/cow/day)': (() => { const f = effSupp(k); return f.pke ? f.pke.v : ''; })(),
+      'PK trailer': (() => { const f = effSupp(k); return ['oad','peno'].filter(m => f.trailers[m] && f.trailers[m].v).map(m => m.toUpperCase()).join(', '); })(),
+      'Other supplements': suppExtrasFor(k).filter(x => x.type || x.kgPerCow).map(x => `${x.type || 'Supplement'} ${x.kgPerCow || 0}kg/cow @ ${x.dm || '?'}%DM`).join('; '),
+      'Fat %': e.fatPct ?? '', 'Protein %': e.proPct ?? '', 'Milk urea': e.mu ?? '',
       'Solids/cow (kg)': (() => { const v = solidsPerCowOn(k); return v === null ? '' : Math.round(v*100)/100; })(),
       'Herd 1': e.herd1 ?? '', 'Herd 2': e.herd2 ?? '', 'Herd 3 (Staph)': e.herd3 ?? '',
       'OAD': e.oad ?? '', 'PENO': e.peno ?? '',
