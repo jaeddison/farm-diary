@@ -241,7 +241,8 @@
           </div>
           <div id="fdPullBlock" style="display:none;">
             <div class="muted" style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Signed in as <span id="fdUserEmail"></span></div>
-            <button class="save-btn" id="cloudSyncBtn" style="width:100%;">Sync backup now</button>
+            <button class="save-btn" id="cloudSyncBtn" style="width:100%;">Sync now</button>
+            <button class="copy-btn" id="cloudReplaceBtn" style="background:var(--ink-soft); margin-top:8px;">Replace this device with cloud copy</button>
             <button class="copy-btn" id="fdSignOutBtn" style="background:var(--rust); margin-top:8px;">Sign out</button>
           </div>
           <div class="status-msg" id="fdStatus"></div>
@@ -538,7 +539,7 @@
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
   import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, browserLocalPersistence, setPersistence }
     from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-  import { getFirestore, doc, getDoc, setDoc }
+  import { getFirestore, doc, getDoc, setDoc, collection, onSnapshot, runTransaction }
     from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
   const daFirebaseConfig = {
@@ -595,7 +596,16 @@
     const snap = await getDoc(doc(fdDb, 'farmDiary', 'data'));
     return snap.exists() ? snap.data() : null;
   };
-  window._fdPush = (payload) => setDoc(doc(fdDb, 'farmDiary', 'data'), payload);
+  window._fdListen = (col, onData, onErr) => onSnapshot(collection(fdDb, col),
+    snap => onData(snap.metadata.fromCache, snap.docChanges().map(c => ({ type:c.type, id:c.doc.id, data:c.doc.data() }))),
+    err => { if(onErr) onErr(err); });
+  window._fdWriteDoc = (col, id, fn) => runTransaction(fdDb, async tx => {
+    const ref = doc(fdDb, col, id);
+    const snap = await tx.get(ref);
+    const w = fn(snap.exists() ? snap.data() : null);
+    if(w) tx.set(ref, w, { merge:true });
+    return !!w;
+  });
   onAuthStateChanged(fdAuth, user => {
     if(window._fdOnAuthChange) window._fdOnAuthChange(user);
   });
@@ -630,97 +640,292 @@ const STRIP_CALVING_MOBS = [ {id:'newMoms', label:'New Moms', optionalZero:true,
 const ALL_STRIP_MOBS = STRIP_MAIN_MOBS.concat(STRIP_CALVING_MOBS);
 
 function loadEntries(){ try{ const raw = localStorage.getItem(STORAGE_KEY); return raw ? JSON.parse(raw) : {}; }catch(e){ return {}; } }
-function saveEntries(entries){ localStorage.setItem(STORAGE_KEY, JSON.stringify(entries)); }
+function saveEntries(entries){ localStorage.setItem(STORAGE_KEY, JSON.stringify(entries)); queueCloudPush(); }
 function loadKline(){
   try{ const raw = localStorage.getItem(KLINE_KEY); return raw ? JSON.parse(raw) : { pod1:{history:{}}, pod3:{history:{}} }; }
   catch(e){ return { pod1:{history:{}}, pod3:{history:{}} }; }
 }
-function saveKline(k){ localStorage.setItem(KLINE_KEY, JSON.stringify(k)); }
+function saveKline(k){ localStorage.setItem(KLINE_KEY, JSON.stringify(k)); queueCloudPush(); }
 
-// ---------- CLOUD BACKUP (Firestore) ----------
-// localStorage stays the primary, always-works store — every read/write above is
-// untouched. This layer just mirrors it to the cloud so nothing is lost if the phone
-// is lost, and pulls a copy back down on sign-in so a wiped phone can recover.
-const LAST_SYNC_KEY = 'farmDiaryLastSync';
+// ---------- CLOUD SYNC (cloud is the master; this phone keeps a working copy) ----------
+// Every field of every day (and each walk, exclusion, k-line entry, setting) is its own record
+// with an "edited at" time. Edits upload as soon as there's signal; changes made on another
+// device arrive live. For the same field edited in two places, the later edit wins.
+// Safety: nothing uploads until every collection has been read from the SERVER, and only fields
+// that were actually edited on this device are ever sent — a blank/fresh browser sends nothing.
+const SYNC_META_KEY = 'farmDiarySyncMeta';
+const SYNC_COLS = ['diary', 'walks', 'excl', 'kline', 'meta'];
+const PASTURE_DEFAULTS = { pre:2850, post:1500 };
+const MASS_CLEAR_LIMIT = 40;
 let cloudSignedIn = false;
-let cloudPullDone = false; // gate — nothing pushes to the cloud until the initial pull has finished merging
-let cloudSyncTimer = null;
-let cloudSyncing = false;
+let syncReady = false;
+let syncUnsubs = [];
+let syncTimer = null, syncBusy = false, applyingRemote = false, allowMassClear = false, syncWarn = '', syncError = '';
+const serverSeen = {};
+function loadSyncMeta(){
+  try{ const m = JSON.parse(localStorage.getItem(SYNC_META_KEY) || 'null'); if(m && m.t && m.h) { m.dirty = m.dirty || {}; return m; } }catch(e){}
+  return { t:{}, h:{}, dirty:{}, migrated:false, legacy:false, last:0 };
+}
+let syncMeta = loadSyncMeta();
+function saveSyncMeta(){ try{ localStorage.setItem(SYNC_META_KEY, JSON.stringify(syncMeta)); }catch(e){} }
+function stable(v){
+  if(v === null || v === undefined || typeof v !== 'object') return JSON.stringify(v === undefined ? null : v);
+  if(Array.isArray(v)) return '[' + v.map(stable).join(',') + ']';
+  return '{' + Object.keys(v).sort().filter(k => v[k] !== undefined).map(k => JSON.stringify(k) + ':' + stable(v[k])).join(',') + '}';
+}
+function hashVal(v){ const s = stable(v); let h = 2166136261; for(let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36) + ':' + s.length; }
+function isBlankVal(v){
+  if(v === null || v === undefined || v === '') return true;
+  if(Array.isArray(v)) return v.every(isBlankVal);
+  if(typeof v === 'object') return Object.keys(v).every(k => isBlankVal(v[k]));
+  return false;
+}
+function fillBlanks(local, other){
+  if(isBlankVal(local)) return other === undefined ? local : other;
+  if(local && other && typeof local === 'object' && typeof other === 'object' && !Array.isArray(local) && !Array.isArray(other)){
+    const out = Object.assign({}, local);
+    Object.keys(other).forEach(k => { out[k] = fillBlanks(local[k], other[k]); });
+    return out;
+  }
+  return local;
+}
+function exclId(x){ return (pk(x.paddock) + '_' + x.from).replace(/[\/|.]/g, '_'); }
 function setCloudStatus(text, color){
   const el = document.getElementById('cloudSyncStatus');
   if(!el) return;
   el.textContent = text;
   el.style.color = color || 'var(--ink-soft)';
 }
-function lastSyncLabel(){
-  const t = localStorage.getItem(LAST_SYNC_KEY);
-  if(!t) return 'Not backed up yet';
-  const d = new Date(parseInt(t,10));
-  return 'Last backed up ' + d.toLocaleDateString('en-GB',{day:'numeric',month:'short'}) + ' ' + d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+function setSyncStatus(){
+  if(!cloudSignedIn){ setCloudStatus('Not signed in — saving on this device only'); return; }
+  if(syncError){ setCloudStatus(syncError, 'var(--rust)'); return; }
+  if(!syncReady){ setCloudStatus('Connecting to cloud… (nothing is uploaded until the cloud copy has been read)'); return; }
+  const n = Object.keys(syncMeta.dirty).length;
+  let msg;
+  if(n) msg = n + ' change' + (n === 1 ? '' : 's') + ' waiting to upload';
+  else if(syncMeta.last){ const d = new Date(syncMeta.last); msg = 'Up to date · ' + d.toLocaleDateString('en-GB', { day:'numeric', month:'short' }) + ' ' + d.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' }); }
+  else msg = 'Up to date';
+  setCloudStatus(msg + (syncWarn ? ' — ' + syncWarn : ''), (n || syncWarn) ? 'var(--rust)' : 'var(--green)');
+}
+// every syncable value on this device as { "collection/id/field": value }
+function localRecords(){
+  const r = {};
+  Object.keys(entries).forEach(d => {
+    const e = entries[d]; if(!e) return;
+    Object.keys(e).forEach(f => {
+      if(f === 'date') return;
+      const v = e[f];
+      if(v && typeof v === 'object' && !Array.isArray(v)) Object.keys(v).forEach(sf => { r['diary/' + d + '/' + f + '__' + sf] = isBlankVal(v[sf]) ? null : v[sf]; });
+      else r['diary/' + d + '/' + f] = isBlankVal(v) ? null : v;
+    });
+  });
+  Object.keys(walks).forEach(d => { r['walks/' + d + '/v'] = walks[d]; });
+  exclusions.forEach(x => { r['excl/' + exclId(x) + '/v'] = x; });
+  ['pod1', 'pod3'].forEach(p => { const h = (kline[p] && kline[p].history) || {}; Object.keys(h).forEach(d => { r['kline/' + p + '_' + d + '/v'] = h[d]; }); });
+  const rs = localStorage.getItem(ROUND_START_KEY); if(rs) r['meta/roundStart/v'] = rs;
+  Object.keys(pastureSettings).forEach(f => {
+    const key = 'meta/pasture/' + f;
+    if(syncMeta.h[key] !== undefined || pastureSettings[f] !== PASTURE_DEFAULTS[f]) r[key] = pastureSettings[f];
+  });
+  return r;
+}
+// notice what changed on this device since last time, and stamp those fields with "edited now"
+function detectLocalChanges(tsOverride){
+  const allow = allowMassClear; allowMassClear = false;
+  const cur = localRecords();
+  const keys = new Set(Object.keys(cur).concat(Object.keys(syncMeta.h)));
+  const first = !syncMeta.migrated;
+  const now = Date.now();
+  let changes = [];
+  keys.forEach(k => {
+    const v = cur[k] === undefined ? null : cur[k];
+    const h = hashVal(v), old = syncMeta.h[k];
+    if(old === undefined){ if(v !== null) changes.push({ k, h, clear:false }); }
+    else if(old !== h) changes.push({ k, h, clear: v === null });
+  });
+  const nClear = changes.filter(c => c.clear).length;
+  if(nClear > MASS_CLEAR_LIMIT && !allow){
+    syncWarn = nClear + ' fields suddenly went blank on this device, so those were NOT uploaded. If that was a mistake, use "Replace this device with cloud copy".';
+    changes = changes.filter(c => !c.clear);
+  } else syncWarn = '';
+  changes.forEach(c => { syncMeta.h[c.k] = c.h; syncMeta.t[c.k] = tsOverride || (first ? 1 : now); syncMeta.dirty[c.k] = 1; });
+  syncMeta.migrated = true;
+  saveSyncMeta();
+  return changes.length;
+}
+function setLocalRecord(col, id, field, value){
+  if(col === 'diary'){
+    let e = entries[id];
+    const i = field.indexOf('__');
+    if(i > 0){
+      const parent = field.slice(0, i), sub = field.slice(i + 2);
+      if(value === null){ if(e && e[parent] && typeof e[parent] === 'object'){ delete e[parent][sub]; if(!Object.keys(e[parent]).length) delete e[parent]; } }
+      else { if(!e) e = entries[id] = { date:id }; if(!e[parent] || typeof e[parent] !== 'object' || Array.isArray(e[parent])) e[parent] = {}; e[parent][sub] = value; }
+    } else if(value === null){ if(e) e[field] = null; }
+    else { if(!e) e = entries[id] = { date:id }; e[field] = value; }
+  } else if(col === 'walks'){ if(value === null) delete walks[id]; else walks[id] = value; }
+  else if(col === 'excl'){
+    const ix = exclusions.findIndex(x => exclId(x) === id);
+    if(value === null){ if(ix >= 0) exclusions.splice(ix, 1); } else if(ix >= 0) exclusions[ix] = value; else exclusions.push(value);
+  } else if(col === 'kline'){
+    const m = id.match(/^(pod\d)_(.+)$/); if(!m || !kline[m[1]]) return;
+    if(!kline[m[1]].history) kline[m[1]].history = {};
+    if(value === null) delete kline[m[1]].history[m[2]]; else kline[m[1]].history[m[2]] = value;
+  } else if(col === 'meta'){
+    if(id === 'roundStart'){
+      if(value) localStorage.setItem(ROUND_START_KEY, value); else localStorage.removeItem(ROUND_START_KEY);
+      roundStartDate = value || loadRoundStart();
+      const el = document.getElementById('roundStartDate'); if(el) el.value = roundStartDate;
+    } else if(id === 'pasture'){ if(value === null) delete pastureSettings[field]; else pastureSettings[field] = value; }
+  }
+}
+// bring one cloud document's fields in, wherever the cloud's edit is at least as new as ours
+function applyRemoteDoc(col, id, data, force, touchedKeys){
+  const f = (data && data.f) || {}, t = (data && data.t) || {};
+  let any = false;
+  Object.keys(t).forEach(field => {
+    const key = col + '/' + id + '/' + field;
+    const rts = t[field] || 0, lts = syncMeta.t[key] || 0;
+    if(!force && rts < lts) return; // we hold a newer edit — it will upload
+    let val = null; try{ val = f[field] === undefined ? null : JSON.parse(f[field]); }catch(e){ return; }
+    if(syncMeta.h[key] !== undefined && syncMeta.h[key] === hashVal(val)){ syncMeta.t[key] = Math.max(lts, rts); delete syncMeta.dirty[key]; return; }
+    setLocalRecord(col, id, field, val);
+    syncMeta.t[key] = rts; delete syncMeta.dirty[key];
+    touchedKeys.push(key); any = true;
+  });
+  return any;
+}
+function persistAfterRemote(){
+  applyingRemote = true;
+  try{
+    saveEntries(entries); saveKline(kline);
+    localStorage.setItem(WALKS_KEY, JSON.stringify(walks));
+    localStorage.setItem(EXCL_KEY, JSON.stringify(exclusions));
+    const pastureCustom = Object.keys(pastureSettings).some(f => pastureSettings[f] !== PASTURE_DEFAULTS[f]);
+    if(pastureCustom || localStorage.getItem(PASTURE_SET_KEY)) localStorage.setItem(PASTURE_SET_KEY, JSON.stringify(pastureSettings));
+  } finally { applyingRemote = false; }
+}
+function rerenderAfterRemote(reloadForm){
+  const tryDo = fn => { try{ fn(); }catch(e){ console.error(e); } };
+  if(reloadForm) tryDo(loadDateIntoForm);
+  tryDo(renderKline);
+  tryDo(() => renderHistory(document.getElementById('searchBox').value));
+  tryDo(renderWalk); tryDo(renderSettings); tryDo(updateGrazingTotals); tryDo(renderRoundTotals); tryDo(renderTrends); tryDo(renderMuFeed);
+}
+function dropEmptyEntries(){
+  Object.keys(entries).forEach(d => { const e = entries[d]; if(e && Object.keys(e).every(k => k === 'date' || isBlankVal(e[k]))) delete entries[d]; });
+}
+function handleSnapshot(col, fromCache, changes, force){
+  if(fromCache && !serverSeen[col]) return; // a cache-only view is never treated as "the cloud"
+  if(typeof formTouched !== 'undefined' && formTouched){ clearTimeout(autosaveTimer); try{ persistCurrentEntry(); }catch(e){} }
+  detectLocalChanges();
+  const touched = [];
+  changes.forEach(c => { if(c.type !== 'removed') applyRemoteDoc(col, c.id, c.data, force, touched); });
+  serverSeen[col] = true;
+  if(touched.length){
+    dropEmptyEntries();
+    persistAfterRemote();
+    const cur = localRecords();
+    touched.forEach(k => { syncMeta.h[k] = hashVal(cur[k] === undefined ? null : cur[k]); });
+    saveSyncMeta();
+    const dayTouched = touched.some(k => k.indexOf('diary/' + selectedDateKey + '/') === 0);
+    rerenderAfterRemote(dayTouched);
+  } else saveSyncMeta();
+  if(!syncReady && SYNC_COLS.every(c => serverSeen[c])){ onAllCollectionsReady(); return; }
+  if(syncReady){ syncMeta.last = Date.now(); saveSyncMeta(); pushDirty(); setSyncStatus(); }
+}
+async function onAllCollectionsReady(){
+  syncReady = true; syncError = '';
+  await legacyImport();
+  setSyncStatus();
+  pushDirty();
+}
+// one-time: pull in whatever the old single-document backup held (only fills gaps)
+async function legacyImport(){
+  if(syncMeta.legacy) return;
+  try{
+    const old = await window._fdPull();
+    if(old){
+      detectLocalChanges();
+      Object.keys(old.entries || {}).forEach(d => { entries[d] = entries[d] ? fillBlanks(entries[d], old.entries[d]) : old.entries[d]; });
+      ['pod1', 'pod3'].forEach(p => { const h = (old.kline && old.kline[p] && old.kline[p].history) || {}; Object.keys(h).forEach(d => { if(!kline[p].history[d]) kline[p].history[d] = h[d]; }); });
+      Object.keys(old.walks || {}).forEach(d => { if(!walks[d]) walks[d] = old.walks[d]; });
+      (old.exclusions || []).forEach(x => { if(!exclusions.some(y => exclId(y) === exclId(x))) exclusions.push(x); });
+      if(!localStorage.getItem(ROUND_START_KEY) && old.roundStart){ localStorage.setItem(ROUND_START_KEY, old.roundStart); roundStartDate = old.roundStart; const el = document.getElementById('roundStartDate'); if(el) el.value = roundStartDate; }
+      persistAfterRemote();
+      detectLocalChanges(1); // oldest possible edit time: uploads only where the cloud has nothing
+      rerenderAfterRemote(true);
+    }
+    syncMeta.legacy = true; saveSyncMeta();
+  }catch(e){ console.error('Legacy import skipped', e); }
+}
+async function pushDirty(){
+  if(!cloudSignedIn || !syncReady || syncBusy) return;
+  detectLocalChanges();
+  const keys = Object.keys(syncMeta.dirty);
+  if(!keys.length){ setSyncStatus(); return; }
+  syncBusy = true; syncError = '';
+  setCloudStatus('Uploading ' + keys.length + ' change' + (keys.length === 1 ? '' : 's') + '…');
+  const groups = {};
+  keys.forEach(k => { const p = k.split('/'); const gk = p[0] + '/' + p[1]; (groups[gk] = groups[gk] || { col:p[0], id:p[1], fields:[] }).fields.push(p.slice(2).join('/')); });
+  const cur = localRecords();
+  let failed = null;
+  for(const g of Object.values(groups)){
+    const sentTs = {};
+    try{
+      await window._fdWriteDoc(g.col, g.id, cloud => {
+        const ct = (cloud && cloud.t) || {}, f = {}, t = {};
+        g.fields.forEach(field => {
+          const key = g.col + '/' + g.id + '/' + field, lts = syncMeta.t[key] || 0;
+          sentTs[key] = lts;
+          if(lts > (ct[field] || 0)){ f[field] = JSON.stringify(cur[key] === undefined ? null : cur[key]); t[field] = lts; }
+        });
+        return Object.keys(t).length ? { f, t } : null;
+      });
+      Object.keys(sentTs).forEach(key => { if(syncMeta.t[key] === sentTs[key]) delete syncMeta.dirty[key]; });
+    }catch(e){ failed = e; console.error('Upload failed', e); break; }
+  }
+  if(!failed) syncMeta.last = Date.now();
+  saveSyncMeta();
+  syncBusy = false;
+  if(failed){ syncError = 'Upload failed (' + ((failed && (failed.code || failed.message)) || 'unknown') + ') — your changes are safe on this device and will retry'; }
+  setSyncStatus();
 }
 function queueCloudPush(){
-  if(!cloudSignedIn) return;
-  clearTimeout(cloudSyncTimer);
-  cloudSyncTimer = setTimeout(pushToCloud, 2000);
+  if(applyingRemote) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => { detectLocalChanges(); if(cloudSignedIn && syncReady) pushDirty(); else setSyncStatus(); }, 1500);
 }
-async function pushToCloud(){
-  // Never push before the initial pull has finished merging — otherwise a save
-  // made in that gap (e.g. right after signing in on a wiped phone, before the
-  // cloud copy has come down yet) would overwrite the real cloud backup with
-  // whatever's on this phone at that instant, which could be nothing at all.
-  if(!cloudSignedIn || cloudSyncing) return;
-  if(!cloudPullDone){ setCloudStatus('Still checking cloud backup — will sync right after'); return; }
-  cloudSyncing = true;
-  setCloudStatus('Backing up...');
-  try{
-    await window._fdPush({ entries, kline, roundStart: roundStartDate, walks, exclusions, pastureSettings, updatedAt: Date.now() });
-    localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
-    setCloudStatus(lastSyncLabel(), 'var(--green)');
-  }catch(e){
-    setCloudStatus('Backup failed — will retry on next save', 'var(--rust)');
-  }
-  cloudSyncing = false;
+function stopSync(){
+  syncUnsubs.forEach(u => { try{ u(); }catch(e){} });
+  syncUnsubs = []; syncReady = false;
+  Object.keys(serverSeen).forEach(k => delete serverSeen[k]);
 }
-async function pullAndMergeFromCloud(){
-  if(!cloudSignedIn) return;
-  cloudPullDone = false; // re-close the gate for this sign-in until this pull actually finishes
-  setCloudStatus('Checking cloud backup...');
-  try{
-    const cloud = await window._fdPull();
-    if(cloud){
-      // Cloud only fills gaps this device doesn't already have — anything typed
-      // here always wins, so an offline edit is never clobbered by an older backup.
-      entries = Object.assign({}, cloud.entries || {}, entries);
-      kline.pod1.history = Object.assign({}, (cloud.kline && cloud.kline.pod1 && cloud.kline.pod1.history) || {}, kline.pod1.history);
-      kline.pod3.history = Object.assign({}, (cloud.kline && cloud.kline.pod3 && cloud.kline.pod3.history) || {}, kline.pod3.history);
-      if(!localStorage.getItem(ROUND_START_KEY) && cloud.roundStart){
-        roundStartDate = cloud.roundStart;
-        const rsEl = document.getElementById('roundStartDate');
-        if(rsEl) rsEl.value = roundStartDate;
-        saveRoundStart(roundStartDate);
-      }
-      walks = Object.assign({}, cloud.walks || {}, walks);
-      const exKeys = new Set(exclusions.map(x => x.paddock + '|' + x.from));
-      (cloud.exclusions || []).forEach(x => { if(!exKeys.has(x.paddock + '|' + x.from)) exclusions.push(x); });
-      if(!localStorage.getItem(PASTURE_SET_KEY) && cloud.pastureSettings) pastureSettings = Object.assign(pastureSettings, cloud.pastureSettings);
-      localStorage.setItem(WALKS_KEY, JSON.stringify(walks));
-      localStorage.setItem(EXCL_KEY, JSON.stringify(exclusions));
-      localStorage.setItem(PASTURE_SET_KEY, JSON.stringify(pastureSettings));
-      saveEntries(entries);
-      saveKline(kline);
-      loadDateIntoForm();
-      renderKline();
-      renderHistory();
-      renderWalk();
-      renderSettings();
-    }
-    setCloudStatus(lastSyncLabel());
-  }catch(e){
-    setCloudStatus('Could not reach cloud backup — using data on this phone', 'var(--rust)');
-  }
-  cloudPullDone = true; // gate open — whatever happened above, it's now safe to push
-  pushToCloud();
+function startSync(){
+  stopSync(); syncError = '';
+  setSyncStatus();
+  SYNC_COLS.forEach(col => {
+    try{
+      syncUnsubs.push(window._fdListen(col,
+        (fromCache, changes) => handleSnapshot(col, fromCache, changes, false),
+        err => { syncError = 'Cloud error (' + ((err && (err.code || err.message)) || 'unknown') + ') — working from this device\'s copy. Nothing is uploaded until the cloud has been read.'; setSyncStatus(); }));
+    }catch(e){ syncError = 'Cloud error (' + (e.code || e.message) + ')'; setSyncStatus(); }
+  });
 }
+function replaceFromCloud(){
+  if(!confirm('Replace everything on this device with the cloud copy?\n\nAnything not yet uploaded from this device will be lost (a safety copy is kept on this device).')) return;
+  try{ localStorage.setItem('farmDiaryBeforeReplace', JSON.stringify({ entries, kline, walks, exclusions, pastureSettings, at:Date.now() })); }catch(e){}
+  stopSync();
+  entries = {}; walks = {}; exclusions = []; kline = { pod1:{ history:{} }, pod3:{ history:{} } };
+  pastureSettings = Object.assign({}, PASTURE_DEFAULTS);
+  localStorage.removeItem(ROUND_START_KEY); localStorage.removeItem(PASTURE_SET_KEY);
+  syncMeta = { t:{}, h:{}, dirty:{}, migrated:true, legacy:true, last:0 };
+  persistAfterRemote(); saveSyncMeta();
+  rerenderAfterRemote(true);
+  startSync();
+}
+window.addEventListener('online', () => { if(!cloudSignedIn) return; if(!syncReady) startSync(); else pushDirty(); });
+setInterval(() => { if(cloudSignedIn && syncReady && Object.keys(syncMeta.dirty).length) pushDirty(); }, 60000);
 
 function todayKeyReal(){ const d = new Date(); return fmtKey(d); }
 function fmtKey(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -1118,16 +1323,17 @@ window._fdOnAuthChange = function(user){
     pullBlock.style.display = 'block';
     document.getElementById('fdUserEmail').textContent = user.email || '';
     cloudSignedIn = true;
-    pullAndMergeFromCloud();
+    startSync();
   } else {
     loginBlock.style.display = 'block';
     pullBlock.style.display = 'none';
     cloudSignedIn = false;
-    cloudPullDone = false;
-    setCloudStatus('Not signed in — saving on this phone only');
+    stopSync();
+    setCloudStatus('Not signed in — saving on this device only');
   }
 };
-document.getElementById('cloudSyncBtn').addEventListener('click', () => { pushToCloud(); });
+document.getElementById('cloudSyncBtn').addEventListener('click', () => { detectLocalChanges(); if(!syncReady) startSync(); else pushDirty(); });
+document.getElementById('cloudReplaceBtn').addEventListener('click', replaceFromCloud);
 document.getElementById('fdSignInBtn').addEventListener('click', async () => {
   const email = document.getElementById('fdEmail').value.trim();
   const pass = document.getElementById('fdPassword').value;
@@ -1727,7 +1933,7 @@ function closeModal(){ document.getElementById('modalOverlay').classList.remove(
 document.getElementById('modalDelete').addEventListener('click', () => {
   if(!modalCurrentKey) return;
   if(confirm('Delete the entry for ' + formatDateNice(modalCurrentKey) + '? This cannot be undone.')){
-    delete entries[modalCurrentKey]; saveEntries(entries); closeModal(); renderHistory(document.getElementById('searchBox').value);
+    delete entries[modalCurrentKey]; allowMassClear = true; saveEntries(entries); closeModal(); renderHistory(document.getElementById('searchBox').value);
   }
 });
 
@@ -2565,6 +2771,9 @@ document.getElementById('importBtn').addEventListener('click', () => {
   }
   setTimeout(() => { statusEl.textContent = ''; }, 4000);
 });
+// register anything already on this device (first run: oldest possible edit time) before any new edits
+detectLocalChanges();
+setSyncStatus();
 </script>
 </body>
 </html>
