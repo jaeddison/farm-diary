@@ -2711,31 +2711,46 @@ function ewSeries(node){
   else if(node.value !== undefined) vals = [node.value];
   return vals.map(v => parseFloat(v)).filter(v => isFinite(v));
 }
+function ewStep(node){
+  const l = node && node.list; if(!l || typeof l !== 'object' || Array.isArray(l)) return null;
+  const k = Object.keys(l).map(Number).filter(isFinite).sort((a, b) => a - b); if(k.length < 2) return null;
+  let m = Infinity; for(let i = 1; i < k.length; i++) m = Math.min(m, k[i] - k[i - 1]); return m;
+}
 function ewShowRaw(txt){ const w = document.getElementById('ewRawWrap'); if(!w) return; w.style.display = 'block'; document.getElementById('ewRaw').value = String(txt).slice(0, 6000); }
 async function ewFetchDay(key){
   const c = ewCfg();
   if(!c.app || !c.api || !c.mac) throw new Error('Add the application key, API key and MAC under Settings → Weather station first.');
   const p = n => String(n).padStart(2, '0'), now = new Date();
   const end = key === todayKeyReal() ? key + ' ' + p(now.getHours()) + ':' + p(now.getMinutes()) + ':' + p(now.getSeconds()) : key + ' 23:59:59';
-  const q = new URLSearchParams({ application_key:c.app, api_key:c.api, mac:c.mac.trim(), start_date:key + ' 00:00:00', end_date:end, cycle_type:'30min',
-    call_back:'outdoor.temperature,wind.wind_speed,wind.wind_direction,rainfall.daily', temp_unitid:'1', wind_speed_unitid:'7', rainfall_unitid:'12' });
-  let r;
-  try{ r = await fetch('https://api.ecowitt.net/api/v3/device/history?' + q.toString()); }
-  catch(e){ throw new Error('Could not reach Ecowitt from the app (offline, or the browser blocked the request).'); }
-  let txt = await r.text(); ewShowRaw(txt);
-  let j; try{ j = JSON.parse(txt); }catch(e){ throw new Error('Ecowitt sent back something unreadable (HTTP ' + r.status + ').'); }
-  if(j.code !== undefined && Number(j.code) !== 0) throw new Error('Ecowitt said: ' + (j.msg || ('error ' + j.code)));
-  const d = j.data || {};
-  const temps = ewSeries(d.outdoor && d.outdoor.temperature);
-  const rain = ewSeries(d.rainfall && d.rainfall.daily);
-  const spd = ewSeries(d.wind && d.wind.wind_speed), dir = ewSeries(d.wind && d.wind.wind_direction);
-  if(!temps.length && !rain.length && !spd.length) throw new Error('No readings came back for that date.');
-  const out = {};
-  if(temps.length){ out.tempHigh = Math.round(Math.max.apply(null, temps) * 10) / 10; out.tempLow = Math.round(Math.min.apply(null, temps) * 10) / 10; }
-  if(rain.length) out.rainfall = Math.round(Math.max.apply(null, rain) * 10) / 10;
-  if(spd.length){ const avg = spd.reduce((a, b) => a + b, 0) / spd.length; out.windStr = avg < EW_LIGHT_MAX ? 'Light' : (avg <= EW_MEDIUM_MAX ? 'Medium' : 'Strong'); out.windAvg = Math.round(avg); }
-  if(dir.length){
-    let sx = 0, sy = 0; dir.forEach((dg, i) => { const w = (spd.length === dir.length ? Math.max(spd[i], 0.1) : 1), rad = dg * Math.PI / 180; sx += Math.sin(rad) * w; sy += Math.cos(rad) * w; });
+  const tries = [['30min', '30-minute'], ['5min', '5-minute'], ['auto', 'automatic-resolution'], ['4hour', '4-hourly'], ['1day', 'daily']];
+  const log = []; let got = null, lastTxt = '';
+  for(let i = 0; i < tries.length; i++){
+    const cyc = tries[i][0];
+    const q = new URLSearchParams({ application_key:c.app, api_key:c.api, mac:c.mac.trim(), start_date:key + ' 00:00:00', end_date:end, cycle_type:cyc,
+      call_back:'outdoor.temperature,wind.wind_speed,wind.wind_direction,rainfall.daily', temp_unitid:'1', wind_speed_unitid:'7', rainfall_unitid:'12' });
+    let r;
+    try{ r = await fetch('https://api.ecowitt.net/api/v3/device/history?' + q.toString()); }
+    catch(e){ throw new Error('Could not reach Ecowitt from the app (offline, or the browser blocked the request).'); }
+    const txt = await r.text(); lastTxt = txt;
+    let j; try{ j = JSON.parse(txt); }catch(e){ throw new Error('Ecowitt sent back something unreadable (HTTP ' + r.status + ').'); }
+    if(j.code !== undefined && Number(j.code) !== 0){ log.push(cyc + ': ' + (j.msg || ('error ' + j.code))); if(i === 0 && /key|mac|auth|illegal/i.test(j.msg || '')) { ewShowRaw(txt); throw new Error('Ecowitt said: ' + (j.msg || ('error ' + j.code))); } continue; }
+    const d = j.data || {};
+    const temps = ewSeries(d.outdoor && d.outdoor.temperature), rain = ewSeries(d.rainfall && d.rainfall.daily);
+    const spd = ewSeries(d.wind && d.wind.wind_speed), dir = ewSeries(d.wind && d.wind.wind_direction);
+    log.push(cyc + ': ' + (temps.length + rain.length + spd.length ? temps.length + ' readings' : 'empty'));
+    if(temps.length || rain.length || spd.length){ const stp = ewStep(d.outdoor && d.outdoor.temperature); got = { cyc:cyc, label:tries[i][1], temps:temps, rain:rain, spd:spd, dir:dir, fine:(stp !== null && stp <= 1800) }; break; }
+    if(i < tries.length - 1) await new Promise(r => setTimeout(r, 400));
+  }
+  ewShowRaw('Tried: ' + log.join(' · ') + '\n\n' + lastTxt);
+  if(!got) throw new Error('No readings came back for that date.');
+  const out = { res:got.label };
+  const fine = got.fine;
+  if(got.temps.length && fine){ out.tempHigh = Math.round(Math.max.apply(null, got.temps) * 10) / 10; out.tempLow = Math.round(Math.min.apply(null, got.temps) * 10) / 10; }
+  else if(got.temps.length) out.tempsSkipped = true;
+  if(got.rain.length) out.rainfall = Math.round(Math.max.apply(null, got.rain) * 10) / 10;
+  if(got.spd.length){ const avg = got.spd.reduce((a, b) => a + b, 0) / got.spd.length; out.windStr = avg < EW_LIGHT_MAX ? 'Light' : (avg <= EW_MEDIUM_MAX ? 'Medium' : 'Strong'); out.windAvg = Math.round(avg); }
+  if(got.dir.length){
+    let sx = 0, sy = 0; got.dir.forEach((dg, i) => { const w = (got.spd.length === got.dir.length ? Math.max(got.spd[i], 0.1) : 1), rad = dg * Math.PI / 180; sx += Math.sin(rad) * w; sy += Math.cos(rad) * w; });
     const deg = (Math.atan2(sx, sy) * 180 / Math.PI + 360) % 360; out.windDir = ['N','NE','E','SE','S','SW','W','NW'][Math.round(deg / 45) % 8];
   }
   return out;
@@ -2759,7 +2774,7 @@ function ewApply(vals){
 function ewUpdateButton(){ const b = document.getElementById('ewFetchBtn'); if(!b) return; const c = ewCfg(); b.style.display = (c.app && c.api && c.mac) ? '' : 'none'; }
 document.getElementById('ewFetchBtn').addEventListener('click', async () => {
   const st = document.getElementById('ewFetchStatus'), btn = document.getElementById('ewFetchBtn'); btn.disabled = true; st.textContent = 'Fetching…';
-  try{ const v = await ewFetchDay(selectedDateKey); st.textContent = ewApply(v) + (v.windAvg !== undefined ? ' (Average wind ' + v.windAvg + ' km/h.)' : ''); }
+  try{ const v = await ewFetchDay(selectedDateKey); st.textContent = ewApply(v) + (v.windAvg !== undefined ? ' (Average wind ' + v.windAvg + ' km/h.)' : '') + (v.res && v.res !== '30-minute' ? ' Used ' + v.res + ' readings' + (v.tempsSkipped ? ' — temperatures left blank, as summaries would understate the high and low.' : '.') : ''); }
   catch(e){ st.textContent = e.message; }
   btn.disabled = false;
 });
@@ -2795,7 +2810,7 @@ async function ewFillDays(keys, say){
     try{
       const v = await ewFetchDay(k), e = entries[k] || { date:k }, add = {};
       ['tempHigh', 'tempLow', 'rainfall', 'windDir', 'windStr'].forEach(f => { if(v[f] !== undefined && (e[f] === undefined || e[f] === null || e[f] === '')) add[f] = v[f]; });
-      if(Object.keys(add).length){ entries[k] = Object.assign({}, e, add, { date:k }); done++; } else { skipped++; ewMarkNoData(k); }
+      if(Object.keys(add).length){ entries[k] = Object.assign({}, e, add, { date:k }); done++; if(v.tempsSkipped) ewMarkNoData(k); } else { skipped++; ewMarkNoData(k); }
     }catch(err){
       if(/^No readings/.test(err.message)){ skipped++; ewMarkNoData(k); }
       else { if(done){ saveEntries(entries); } throw new Error(err.message + (done ? ' (' + done + ' days were filled before this.)' : '')); }
@@ -2809,7 +2824,7 @@ function ewCatchupCheck(){
   const box = document.getElementById('ewCatchup'); if(!box) return;
   const c = ewCfg();
   if(!(c.app && c.api && c.mac) || ewDismissed || ewBusy){ if(!ewBusy) box.style.display = 'none'; return; }
-  const today = todayKeyReal(), nd = ewNoData(), miss = ewMissingDays(keyOffsetFrom(today, -14), keyOffsetFrom(today, -1)).filter(k => !nd.has(k));
+  const today = todayKeyReal(), nd = ewNoData(), miss = ewMissingDays(keyOffsetFrom(today, -7), keyOffsetFrom(today, -1)).filter(k => !nd.has(k));
   if(!miss.length){ box.style.display = 'none'; return; }
   box.style.display = 'block';
   box.innerHTML = '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px;"><span><b>' + miss.length + '</b> recent day' + (miss.length > 1 ? 's have' : ' has') + ' no weather.</span><span style="display:flex; gap:6px;"><button class="hmini" id="ewCatchGo">Fill from station</button><button class="hmini" id="ewCatchNo">Not now</button></span></div><div id="ewCatchMsg" style="margin-top:6px; color:var(--ink-soft);"></div>';
