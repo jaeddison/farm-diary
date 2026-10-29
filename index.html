@@ -310,7 +310,9 @@
         <div id="trailerHint" style="font-size:12px; color:var(--ink-soft); margin-bottom:12px;"></div>
         <div id="suppExtras"></div>
         <datalist id="suppTypes"></datalist>
-        <button class="copy-btn" id="suppAddBtn" style="background:var(--green); margin-top:4px;">+ Add supplement (silage, hay…)</button>
+        <button class="copy-btn" id="suppAddBtn" style="background:var(--green); margin-top:4px;">+ Add supplement (silage, bales…)</button>
+        <button class="copy-btn" id="suppCopyBtn" style="background:var(--ink-soft); margin-top:4px;">Copy yesterday's extras</button>
+        <div class="status-msg" id="suppCopyStatus"></div>
         <div id="suppSummary" style="font-size:13px; margin-top:12px;"></div>
       </div>
     </div>
@@ -2621,12 +2623,24 @@ function effSupp(dateKey){
 }
 function suppExtrasFor(dateKey){
   const x = suppExplicitFor(dateKey);
-  return ((x && x.extras) || []).map(e => ({ type: e.type || '', dm: e.dm !== undefined ? e.dm : (parseFloat(e.dmStr) || null), kgPerCow: e.kgPerCow !== undefined ? e.kgPerCow : (parseFloat(e.kg) || null), mobs: e.mobs || [] }));
+  return ((x && x.extras) || []).map(e => {
+    const mode = e.mode === 'total' ? 'total' : 'cow';
+    const bales = e.bales !== undefined ? e.bales : (e.balesStr === undefined || e.balesStr === '' ? null : parseFloat(e.balesStr));
+    const dmEach = e.dmEach !== undefined ? e.dmEach : (parseFloat(e.eachStr) || null);
+    return { type: e.type || '', mode, dm: e.dm !== undefined ? e.dm : (parseFloat(e.dmStr) || null), kgPerCow: e.kgPerCow !== undefined ? e.kgPerCow : (parseFloat(e.kg) || null),
+      bales, dmEach, totalDm: mode === 'total' ? ((bales === null || bales === undefined ? 1 : bales) * (dmEach || 0)) : 0, mobs: e.mobs || [] };
+  });
 }
-function suppDmPerCow(mobId, eff, extras){
+// kg DM per cow for one mob. 'Total DM' extras (bales etc.) are spread evenly over the cows of the mobs ticked.
+function suppDmPerCow(mobId, eff, extras, cowsOf){
+  cowsOf = cowsOf || mobCowCountForSupp;
   const pke = (eff.pke ? eff.pke.v : 0) * (ONCE_A_DAY.indexOf(mobId) >= 0 ? 0.5 : 1); // PKE taken as 100% DM
   let ex = 0;
-  extras.forEach(x => { if(x.mobs.indexOf(mobId) >= 0) ex += (x.kgPerCow || 0) * ((x.dm || 0) / 100); });
+  extras.forEach(x => {
+    if(x.mobs.indexOf(mobId) < 0) return;
+    if(x.mode === 'total'){ const c = x.mobs.reduce((a, id) => a + (cowsOf(id) || 0), 0); if(c > 0) ex += x.totalDm / c; }
+    else ex += (x.kgPerCow || 0) * ((x.dm || 0) / 100);
+  });
   return { pke, ex, total: pke + ex };
 }
 function mobCowCountForSupp(id){
@@ -2640,19 +2654,21 @@ function suppToStore(){
   const v = parseFloat(suppState.pke); if(suppState.pke !== '' && !isNaN(v)) out.pke = v;
   const tr = {}; ['oad','peno'].forEach(k => { if(suppState.trailers[k] !== null) tr[k] = suppState.trailers[k]; });
   if(Object.keys(tr).length) out.trailers = tr;
-  const ex = suppState.extras.filter(x => (x.type || '').trim() || parseFloat(x.kg)).map(x => ({ type:(x.type || '').trim(), dm: parseFloat(x.dmStr) || null, kgPerCow: parseFloat(x.kg) || null, mobs: x.mobs.slice() }));
+  const ex = suppState.extras.filter(x => (x.type || '').trim() || parseFloat(x.kg) || parseFloat(x.eachStr)).map(x => x.mode === 'total'
+    ? { type:(x.type || '').trim(), mode:'total', bales: (x.balesStr === '' || x.balesStr === undefined) ? null : parseFloat(x.balesStr), dmEach: parseFloat(x.eachStr) || null, mobs: x.mobs.slice() }
+    : { type:(x.type || '').trim(), dm: parseFloat(x.dmStr) || null, kgPerCow: parseFloat(x.kg) || null, mobs: x.mobs.slice() });
   if(ex.length) out.extras = ex;
   return Object.keys(out).length ? out : undefined;
 }
 function loadSuppFromEntry(sp){
   suppState.pke = sp.pke !== undefined && sp.pke !== null ? String(sp.pke) : '';
   suppState.trailers = { oad: sp.trailers && sp.trailers.oad !== undefined ? sp.trailers.oad : null, peno: sp.trailers && sp.trailers.peno !== undefined ? sp.trailers.peno : null };
-  suppState.extras = (sp.extras || []).map(e => ({ type:e.type || '', dmStr: e.dm !== null && e.dm !== undefined ? String(e.dm) : '', kg: e.kgPerCow !== null && e.kgPerCow !== undefined ? String(e.kgPerCow) : '', mobs: (e.mobs || []).slice() }));
+  suppState.extras = (sp.extras || []).map(e => ({ type:e.type || '', mode: e.mode === 'total' ? 'total' : 'cow', dmStr: e.dm !== null && e.dm !== undefined ? String(e.dm) : '', kg: e.kgPerCow !== null && e.kgPerCow !== undefined ? String(e.kgPerCow) : '', balesStr: e.bales !== null && e.bales !== undefined ? String(e.bales) : '', eachStr: e.dmEach !== null && e.dmEach !== undefined ? String(e.dmEach) : '', mobs: (e.mobs || []).slice() }));
 }
 function suppFeedDmForDay(dateKey){ /* total kg DM fed across herd that day (selected date uses live cow counts) */
   const eff = effSupp(dateKey), extras = suppExtrasFor(dateKey);
   let pke = 0, ex = 0;
-  SUPP_MOBS.forEach(m => { const c = dateKey === selectedDateKey ? mobCowCountForSupp(m.id) : cowsOnDate(dateKey, m.id); const d = suppDmPerCow(m.id, eff, extras); pke += c * d.pke; ex += c * d.ex; });
+  SUPP_MOBS.forEach(m => { const c = dateKey === selectedDateKey ? mobCowCountForSupp(m.id) : cowsOnDate(dateKey, m.id); const d = suppDmPerCow(m.id, eff, extras, dateKey === selectedDateKey ? undefined : (cid => cowsOnDate(dateKey, cid))); pke += c * d.pke; ex += c * d.ex; });
   return { pke, ex };
 }
 function cowsOnDate(dateKey, id){
@@ -2680,6 +2696,13 @@ function renderSuppHints(){
   const lines = [];
   if(eff.pke) lines.push(`PKE ${eff.pke.v} kg/cow/day (OAD &amp; PENO ${eff.pke.v / 2})`);
   extras.forEach(x => {
+    if(x.mode === 'total'){
+      if(!x.type && !x.totalDm) return;
+      const c = x.mobs.reduce((a, id) => a + (mobCowCountForSupp(id) || 0), 0);
+      const nb = (x.bales === null || x.bales === undefined) ? 1 : x.bales;
+      lines.push(`${escapeHtml(x.type || 'Supplement')}: ${nb} × ${x.dmEach || '?'} kg DM = ${Math.round(x.totalDm).toLocaleString()} kg DM` + (c > 0 ? ` · ${(x.totalDm / c).toFixed(2)} kg DM/cow over ${c.toLocaleString()} cows` : ' <span style="color:var(--rust);">(enter cow counts for the mobs ticked)</span>') + (x.dmEach ? '' : ' <span style="color:var(--rust);">(enter kg DM each)</span>'));
+      return;
+    }
     if(!x.type && !x.kgPerCow) return;
     const dmPc = (x.kgPerCow || 0) * ((x.dm || 0) / 100);
     lines.push(`${escapeHtml(x.type || 'Supplement')}: ${x.kgPerCow || 0} kg fresh/cow @ ${x.dm || '?'}% DM = ${dmPc.toFixed(2)} kg DM/cow` + (x.dm ? '' : ' <span style="color:var(--rust);">(enter % DM)</span>'));
@@ -2687,6 +2710,20 @@ function renderSuppHints(){
   const tot = suppFeedDmForDay(selectedDateKey);
   let html = lines.map(l => `<div style="padding:3px 0;">${l}</div>`).join('');
   if(tot.pke + tot.ex > 0) html += `<div style="padding-top:6px; border-top:1px solid var(--line); margin-top:4px;"><strong>${Math.round(tot.pke + tot.ex).toLocaleString()} kg DM fed</strong> <span style="color:var(--ink-soft);">(PKE ${Math.round(tot.pke).toLocaleString()} · other ${Math.round(tot.ex).toLocaleString()}) across the cows entered above</span></div>`;
+  // running tally of each supplement over the last 7 days (this day included)
+  const tally = {};
+  for(let i = 0; i < 7; i++){
+    const k = keyOffsetFrom(selectedDateKey, -i);
+    suppExtrasFor(k).forEach(x => {
+      const name = (x.type || 'Supplement').trim(); const t = tally[name.toLowerCase()] = tally[name.toLowerCase()] || { name, dm:0, bales:0, days:0 };
+      let dmKg = 0;
+      if(x.mode === 'total'){ dmKg = x.totalDm; t.bales += (x.bales === null || x.bales === undefined ? 1 : x.bales); }
+      else { const c = x.mobs.reduce((a, id) => a + (k === selectedDateKey ? mobCowCountForSupp(id) : cowsOnDate(k, id)), 0); dmKg = c * (x.kgPerCow || 0) * ((x.dm || 0) / 100); }
+      if(dmKg > 0 || x.mode === 'total'){ t.dm += dmKg; t.days++; }
+    });
+  }
+  const tl = Object.values(tally).filter(t => t.dm > 0);
+  if(tl.length) html += `<div style="margin-top:8px; font-size:12px; color:var(--ink-soft);"><div style="font-weight:600;">Last 7 days</div>` + tl.map(t => `<div>${escapeHtml(t.name)}: ${t.bales ? t.bales + ' bale' + (t.bales === 1 ? '' : 's') + ' · ' : ''}${Math.round(t.dm).toLocaleString()} kg DM · fed on ${t.days} day${t.days === 1 ? '' : 's'}</div>`).join('') + `</div>`;
   document.getElementById('suppSummary').innerHTML = html;
   if(document.getElementById('feedSection').classList.contains('open')) updateFeedOffered();
 }
@@ -2695,10 +2732,28 @@ function renderSupp(){
   const box = document.getElementById('suppExtras'); box.innerHTML = '';
   suppState.extras.forEach((x, i) => {
     const row = document.createElement('div'); row.className = 'supp-row';
-    row.innerHTML = `<div class="field-row"><div class="field"><label>Supplement</label><input type="text" list="suppTypes" data-k="type" placeholder="e.g. Round bale silage"></div><div class="field"><label>% DM</label><input type="number" inputmode="decimal" data-k="dmStr" step="0.1"></div></div>
-      <div class="field-row"><div class="field"><label>kg fresh per cow</label><input type="number" inputmode="decimal" data-k="kg" step="0.1"></div><div class="field" style="display:flex; align-items:flex-end;"><button class="copy-btn" data-remove style="background:var(--rust); margin-top:0;">Remove</button></div></div>
-      <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px;" data-mobs></div>`;
-    row.querySelectorAll('input').forEach(inp => { inp.value = x[inp.dataset.k]; inp.addEventListener('input', () => { x[inp.dataset.k] = inp.value; scheduleAutosave(); renderSuppHints(); }); });
+    const isTotal = x.mode === 'total';
+    row.innerHTML = `<div style="display:flex; gap:6px; margin-bottom:8px;"><div class="toggle-btn ${isTotal ? '' : 'active-g'}" data-mode="cow" style="padding:7px 4px; font-size:12px;">Per cow (fresh kg + %DM)</div><div class="toggle-btn ${isTotal ? 'active-g' : ''}" data-mode="total" style="padding:7px 4px; font-size:12px;">Total DM / bales</div></div>
+      <div class="field"><label>Supplement</label><input type="text" list="suppTypes" data-k="type" placeholder="e.g. Round bale silage"></div>
+      ${isTotal
+        ? `<div class="field-row"><div class="field"><label>Bales / loads</label><input type="number" inputmode="decimal" data-k="balesStr" step="0.5" placeholder="1"></div><div class="field"><label>kg DM each</label><input type="number" inputmode="decimal" data-k="eachStr" step="1" placeholder="e.g. 220"></div></div>`
+        : `<div class="field-row"><div class="field"><label>% DM</label><input type="number" inputmode="decimal" data-k="dmStr" step="0.1"></div><div class="field"><label>kg fresh per cow</label><input type="number" inputmode="decimal" data-k="kg" step="0.1"></div></div>`}
+      <div style="font-size:11px; color:var(--ink-soft); margin:-4px 0 6px;">${isTotal ? 'Spread evenly over the cows of the mobs ticked below. Applies to this day only.' : 'Applies to this day only.'}</div>
+      <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;" data-mobs></div>
+      <button class="copy-btn" data-remove style="background:var(--rust); margin-top:0;">Remove</button>`;
+    row.querySelectorAll('input').forEach(inp => {
+      inp.value = x[inp.dataset.k];
+      inp.addEventListener('input', () => { x[inp.dataset.k] = inp.value; scheduleAutosave(); renderSuppHints(); });
+      if(inp.dataset.k === 'type') inp.addEventListener('change', () => {
+        if(x.mode === 'total' && !x.eachStr){ const v = lastDmEach(x.type); if(v){ x.eachStr = String(v); renderSupp(); scheduleAutosave(); } }
+      });
+    });
+    row.querySelectorAll('[data-mode]').forEach(btn => btn.addEventListener('click', () => {
+      if(x.mode === btn.dataset.mode || (btn.dataset.mode === 'cow' && !x.mode)) return;
+      x.mode = btn.dataset.mode;
+      if(x.mode === 'total' && !x.eachStr){ const v = lastDmEach(x.type); if(v) x.eachStr = String(v); }
+      renderSupp(); touchAndPersist();
+    }));
     const chips = row.querySelector('[data-mobs]');
     SUPP_MOBS.forEach(m => {
       const c = document.createElement('div'); c.className = 'toggle-btn' + (x.mobs.indexOf(m.id) >= 0 ? ' active-g' : ''); c.textContent = m.label; c.style.cssText = 'flex:0 0 auto; padding:7px 10px;';
@@ -2713,8 +2768,26 @@ function renderSupp(){
 document.getElementById('pkeField').addEventListener('input', (e) => { suppState.pke = e.target.value; scheduleAutosave(); renderSuppHints(); });
 [['trailerOad','oad'], ['trailerPeno','peno']].forEach(([id, m]) => document.getElementById(id).addEventListener('change', (e) => { suppState.trailers[m] = e.target.checked; touchAndPersist(); renderSuppHints(); }));
 document.getElementById('suppAddBtn').addEventListener('click', () => {
-  suppState.extras.push({ type:'', dmStr:'', kg:'', mobs: SUPP_MOBS.map(m => m.id) });
+  suppState.extras.push({ type:'', mode:'cow', dmStr:'', kg:'', balesStr:'', eachStr:'', mobs: SUPP_MOBS.map(m => m.id) });
   renderSupp();
+});
+// the kg DM per bale last used for this supplement name, so it doesn't have to be retyped
+function lastDmEach(type){
+  const name = (type || '').trim().toLowerCase();
+  const ks = Object.keys(entries).sort().reverse();
+  for(const k of ks){ const x = entries[k].supplements; if(!x || !x.extras) continue; for(const e of x.extras){ if(e.mode === 'total' && e.dmEach && (!name || (e.type || '').trim().toLowerCase() === name)) return e.dmEach; } }
+  return null;
+}
+document.getElementById('suppCopyBtn').addEventListener('click', () => {
+  const y = keyOffsetFrom(selectedDateKey, -1), st = document.getElementById('suppCopyStatus');
+  const ex = entries[y] && entries[y].supplements && entries[y].supplements.extras;
+  if(!ex || !ex.length){ st.textContent = 'Nothing to copy — no extra supplements logged on ' + fmtShort(y); setTimeout(() => { st.textContent = ''; }, 3000); return; }
+  const keep = { pke: suppState.pke, trailers: suppState.trailers, extras: suppState.extras };
+  loadSuppFromEntry({ extras: JSON.parse(JSON.stringify(ex)) });
+  const copied = suppState.extras; // only the extras are copied — PKE and trailers stay as they are today
+  suppState.pke = keep.pke; suppState.trailers = keep.trailers; suppState.extras = keep.extras.concat(copied);
+  renderSupp(); touchAndPersist();
+  st.textContent = 'Copied ' + ex.length + ' from ' + fmtShort(y) + ' — change anything that differs today'; setTimeout(() => { st.textContent = ''; }, 4000);
 });
 // remember supplement names you've used, for the type-ahead
 function refreshSuppTypes(){
@@ -2732,7 +2805,7 @@ function dayFeed(k){
   let cows = 0, pasture = 0, supp = 0, noWalk = false, noArea = false;
   const addMob = (id, nCows, slots) => {
     nCows = nCows || 0; if(nCows <= 0) return;
-    cows += nCows; supp += nCows * suppDmPerCow(id, eff, extras).total;
+    cows += nCows; supp += nCows * suppDmPerCow(id, eff, extras, cid => cowsOnDate(k, cid)).total;
     let any = false;
     slots.forEach(s => {
       if(!s.p || !s.ha) return; any = true;
@@ -2939,7 +3012,7 @@ document.getElementById('excelExportBtn').addEventListener('click', () => {
       'SCC': e.scc ?? '',
       'PKE (kg/cow/day)': (() => { const f = effSupp(k); return f.pke ? f.pke.v : ''; })(),
       'PK trailer': (() => { const f = effSupp(k); return ['oad','peno'].filter(m => f.trailers[m] && f.trailers[m].v).map(m => m.toUpperCase()).join(', '); })(),
-      'Other supplements': suppExtrasFor(k).filter(x => x.type || x.kgPerCow).map(x => `${x.type || 'Supplement'} ${x.kgPerCow || 0}kg/cow @ ${x.dm || '?'}%DM`).join('; '),
+      'Other supplements': suppExtrasFor(k).filter(x => x.type || x.kgPerCow || x.totalDm).map(x => x.mode === 'total' ? `${x.type || 'Supplement'} ${(x.bales === null || x.bales === undefined) ? 1 : x.bales} x ${x.dmEach || '?'}kg DM = ${Math.round(x.totalDm)}kg DM` : `${x.type || 'Supplement'} ${x.kgPerCow || 0}kg/cow @ ${x.dm || '?'}%DM`).join('; '),
       'Fat %': e.fatPct ?? '', 'Protein %': e.proPct ?? '', 'Milk urea': e.mu ?? '',
       'Solids/cow (kg)': (() => { const v = solidsPerCowOn(k); return v === null ? '' : Math.round(v*100)/100; })(),
       'Herd 1': e.herd1 ?? '', 'Herd 2': e.herd2 ?? '', 'Herd 3 (Staph)': e.herd3 ?? '',
