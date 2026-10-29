@@ -74,8 +74,10 @@
   .herd-note{ font-size:12px; color:var(--ink-soft); margin:6px 0; }
   .herd-btnrow{ display:flex; gap:6px; flex-wrap:wrap; margin:8px 0; } .herd-btnrow button{ flex:1 1 auto; padding:10px 8px; border:1px solid var(--line); border-radius:8px; background:#fff; font-weight:600; font-size:13px; cursor:pointer; font-family:'IBM Plex Sans',sans-serif; }
   .herd-btnrow button.go{ background:var(--green); color:#fff; border-color:var(--green); } .herd-btnrow button.warn{ background:var(--rust); color:#fff; border-color:var(--rust); }
+  .hrow{ display:flex; align-items:center; gap:6px; padding:7px 2px; border-bottom:1px solid var(--line); }
   .hmini{ padding:4px 8px; border:1px solid var(--line); border-radius:6px; background:#fff; font-size:12px; cursor:pointer; }
   .herd-counts{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; } .herd-counts div{ background:#fff; border:1px solid var(--line); border-radius:8px; padding:8px; text-align:center; } .herd-counts b{ display:block; font-size:20px; } .herd-counts span{ font-size:11px; color:var(--ink-soft); }
+  .tabbar.many button{ font-size:12px; padding:12px 1px; }
   .tabbar{ display:flex; border-bottom:1px solid var(--line); background:var(--paper); position:sticky; top:0; z-index:5; }
   .tabbar button{ flex:1; padding:12px; background:none; border:none; border-bottom:2px solid transparent; font-family:'IBM Plex Sans',sans-serif; font-size:14px; font-weight:600; color:var(--ink-soft); cursor:pointer; }
   .tabbar button.active{ color:var(--green); border-bottom-color:var(--green); }
@@ -158,6 +160,7 @@
     <button id="tabKlineBtn">K-line</button>
     <button id="tabWalkBtn">Walk</button>
     <button id="tabHerdBtn">Herd</button>
+    <button id="tabCalvBtn" style="display:none;">Calving</button>
     <button id="tabHistoryBtn">History</button>
     <button id="tabSettingsBtn">Settings</button>
   </div>
@@ -395,6 +398,10 @@
     </div>
   </div>
 
+  <div class="view" id="calvView">
+    <div id="calvRoot"></div>
+  </div>
+
   <div class="view" id="herdView">
     <div class="field-row" id="herdDateWrap"><div class="field"><label>Changes dated</label><input type="date" id="herdDate"></div></div>
     <div class="herd-note" id="herdDateNote"></div>
@@ -403,6 +410,13 @@
 
   <div class="view" id="historyView">
     <input type="text" class="search-box" id="searchBox" placeholder="Search notes or date (e.g. dry matter, 12 July)">
+    <div class="card collapsed" data-card="lamehistory" style="margin-top:12px;">
+      <div class="card-head"><span class="dot r"></span><h2>Lame cow history</h2><span class="chevron">▾</span></div>
+      <div class="card-body">
+        <div class="field" style="margin-bottom:8px;"><label>Filter by tag (blank = everyone)</label><input type="text" id="lameHistTag" inputmode="numeric" autocomplete="off"></div>
+        <div id="lameHistOut"></div>
+      </div>
+    </div>
     <div class="card" data-card="paddocklookup" style="margin-top:12px;">
       <div class="card-head"><span class="dot a"></span><h2>Paddock lookup</h2><span class="chevron">▾</span></div>
       <div class="card-body">
@@ -800,6 +814,12 @@ function localRecords(){
   Object.keys(herd.lame).forEach(id => { r['meta/lame/' + id] = herd.lame[id]; });
   Object.keys(herd.flags).forEach(t => { r['meta/cowflag/' + t] = herd.flags[t]; });
   Object.keys(herd.graze).forEach(g => { r['meta/herdcfg/graze_' + g] = herd.graze[g]; });
+  if(herd.heifer && herd.heifer !== 'Bay 6') r['meta/herdcfg/heifer'] = herd.heifer;
+  Object.keys(herd.calv).forEach(id => { r['meta/calv_' + ((herd.calv[id].date || '0000').slice(0, 4)) + '/' + id] = herd.calv[id]; });
+  Object.keys(herd.watch).forEach(id => { r['meta/watch/' + id] = herd.watch[id]; });
+  Object.keys(herd.tx).forEach(id => { r['meta/tx/' + id] = herd.tx[id]; });
+  Object.keys(herd.bays).forEach(b => { r['meta/baycount/' + b.replace(/\s+/g, '_')] = herd.bays[b]; });
+  Object.keys(herd.tallies).forEach(id => { r['meta/tally/' + id] = herd.tallies[id]; });
   const rs = localStorage.getItem(ROUND_START_KEY); if(rs) r['meta/roundStart/v'] = rs;
   Object.keys(pastureSettings).forEach(f => {
     const key = 'meta/pasture/' + f;
@@ -858,11 +878,17 @@ function setLocalRecord(col, id, field, value){
     else if(id === 'herdcfg'){
       if(field === 'cutover') herd.cutover = value || null;
       else if(field === 'calving') herd.calving = !!value;
+      else if(field === 'heifer') herd.heifer = value || 'Bay 6';
       else if(field.indexOf('graze_') === 0){ if(value === null) delete herd.graze[field.slice(6)]; else herd.graze[field.slice(6)] = value; }
       herdStamp++;
     }
     else if(id === 'herdbase'){ if(value === null) delete herd.base[field]; else herd.base[field] = value; herdStamp++; }
     else if(id.indexOf('mv_') === 0){ if(value === null) delete herd.events[field]; else herd.events[field] = value; herdStamp++; }
+    else if(id.indexOf('calv_') === 0){ if(value === null) delete herd.calv[field]; else herd.calv[field] = value; }
+    else if(id === 'watch'){ if(value === null) delete herd.watch[field]; else herd.watch[field] = value; }
+    else if(id === 'tx'){ if(value === null) delete herd.tx[field]; else herd.tx[field] = value; }
+    else if(id === 'baycount'){ const b = field.replace(/_/g, ' '); if(value === null) delete herd.bays[b]; else herd.bays[b] = value; }
+    else if(id === 'tally'){ if(value === null) delete herd.tallies[field]; else herd.tallies[field] = value; }
     else if(id === 'split'){ if(value === null) delete herd.splits[field]; else herd.splits[field] = value; herdStamp++; }
     else if(id === 'lame'){ if(value === null) delete herd.lame[field]; else herd.lame[field] = value; }
     else if(id === 'cowflag'){ if(value === null) delete herd.flags[field]; else herd.flags[field] = value; }
@@ -909,7 +935,7 @@ function rerenderAfterRemote(reloadForm){
   if(reloadForm) tryDo(loadDateIntoForm);
   tryDo(renderKline);
   tryDo(() => renderHistory(document.getElementById('searchBox').value));
-  tryDo(renderHerd); tryDo(applyHerdToForm); tryDo(renderWalk); tryDo(renderSettings); tryDo(updateGrazingTotals); tryDo(renderRoundTotals); tryDo(renderTrends); tryDo(renderMuFeed);
+  tryDo(renderHerd); tryDo(renderCalving); tryDo(applyHerdToForm); tryDo(renderWalk); tryDo(renderSettings); tryDo(updateGrazingTotals); tryDo(renderRoundTotals); tryDo(renderTrends); tryDo(renderMuFeed);
 }
 function dropEmptyEntries(){
   Object.keys(entries).forEach(d => { const e = entries[d]; if(e && Object.keys(e).every(k => k === 'date' || isBlankVal(e[k]))) delete entries[d]; });
@@ -1086,7 +1112,7 @@ const HERD_GROUPS = [
 ];
 const HERD_GRAZE_DEFAULT = { milking:128, oad:100, peno:100, colostrum:100, newMoms:100 };
 const FOOT_LABELS = { LF:'Left front', RF:'Right front', LR:'Left rear', RR:'Right rear' };
-function blankHerd(){ return { cutover:null, calving:false, base:{}, events:{}, splits:{}, lame:{}, flags:{}, graze:{} }; }
+function blankHerd(){ return { cutover:null, calving:false, base:{}, events:{}, splits:{}, lame:{}, flags:{}, graze:{}, calv:{}, watch:{}, tx:{}, bays:{}, tallies:{}, heifer:'Bay 6' }; }
 let herd = (function(){ const h = loadJsonKey(HERD_KEY, null); return h ? Object.assign(blankHerd(), h) : blankHerd(); })();
 let herdStamp = 0, herdEvCache = { stamp:-1, list:[] }, herdStateCache = {};
 const herdUI = { date:null, open:{ counts:true, milking:true }, status:'', confirm:null, inputs:{}, feet:[], search:'', sel:{} };
@@ -1162,14 +1188,15 @@ function herdChanged(){
   saveEntries(entries); // also queues the cloud upload
   applyHerdToForm();
   renderHerd();
+  if(typeof renderCalving === 'function') renderCalving();
 }
 function herdParseTags(raw){ return Array.from(new Set((raw || '').split(/[\s,]+/).map(t => t.trim()).filter(Boolean))); }
 function herdEventId(){ return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 function herdStatus(msg){ herdUI.status = msg; renderHerd(); }
 function herdTagSort(a, b){ return a.localeCompare(b, undefined, { numeric:true }); }
 // make moves happen on the chosen day (today or earlier)
-function herdDoMove(tags, props, okText){
-  const date = herdUI.date || todayKeyReal();
+function herdDoMove(tags, props, okText, dateOverride){
+  const date = dateOverride || herdUI.date || todayKeyReal();
   if(!herd.cutover) return herdStatus('Start herd tracking first (top of this page).');
   if(date > todayKeyReal()) return herdStatus('Changes can be dated today or earlier — not the future.');
   if(!tags.length) return herdStatus('Enter at least one tag number.');
@@ -1207,39 +1234,100 @@ function herdImportD1(d){
   (d.lameArchive || []).forEach(l => { extra.lame['d1_' + l.id] = { tag:String(l.tag), feet:l.feet || [], notes:l.notes || '', added:l.dateAdded || l.clearedDate || today, cleared:l.clearedDate || today, where:l.location || '' }; });
   (d.oad || []).forEach(c => { if(c.skinny) extra.flags[String(c.tag)] = { skinny:true }; });
   const g = d._graze || {};
+  calvImport(d);
   extra.graze = { milking:g.milk || HERD_GRAZE_DEFAULT.milking, oad:g.oad || HERD_GRAZE_DEFAULT.oad, peno:g.peno || HERD_GRAZE_DEFAULT.peno, colostrum:g.col || HERD_GRAZE_DEFAULT.colostrum };
   herdStart(base, extra);
 }
 
 // ----- rendering -----
-function herdChip(t, x, g, extra){
-  const sel = herdUI.sel[g] && herdUI.sel[g].has(t);
-  const days = (g === 'oad' || g === 'peno' || g === 'colostrum' || g === 'newMoms') && x.since ? Math.max(0, daysBetweenKeys(x.since, todayKeyReal())) : null;
-  const skinny = herd.flags[t] && herd.flags[t].skinny;
-  return '<button class="hchip' + (sel ? ' sel' : '') + (x.st ? ' staph' : '') + (skinny ? ' skinny' : '') + '" data-act="pick" data-g="' + g + '" data-tag="' + escapeHtml(t) + '">' + escapeHtml(t) + (days !== null ? '<small>' + days + 'd</small>' : '') + (skinny ? '<small>skinny</small>' : '') + '</button>';
-}
-function herdCard(id, title, countText, bodyHtml){
+function herdCard(id, title, countText, bodyHtml, headExtra){
   const open = !!herdUI.open[id];
-  return '<div class="card' + (open ? '' : ' collapsed') + '" data-hcard="' + id + '"><div class="card-head" data-act="toggle" data-id="' + id + '"><span class="dot g"></span><h2>' + title + (countText ? ' <span style="font-weight:400; color:var(--ink-soft); font-size:13px;">' + countText + '</span>' : '') + '</h2><span class="chevron">▾</span></div><div class="card-body">' + bodyHtml + '</div></div>';
+  return '<div class="card' + (open ? '' : ' collapsed') + '" data-hcard="' + id + '"><div class="card-head" data-act="toggle" data-id="' + id + '"><span class="dot g"></span><h2>' + title + (countText ? ' <span style="font-weight:400; color:var(--ink-soft); font-size:13px;">' + countText + '</span>' : '') + '</h2>' + (headExtra || '') + '<span class="chevron">▾</span></div><div class="card-body">' + bodyHtml + '</div></div>';
 }
-function herdGroupCard(g, st, today){
+function herdCopyBtn(g){ return '<button class="hmini" style="margin-left:auto; margin-right:8px;" data-act="copy" data-g="' + g + '">Copy list</button>'; }
+function herdAddForm(g){
+  return '<div style="display:flex; gap:8px; align-items:flex-end; margin-top:12px; border-top:1px dashed var(--line); padding-top:12px;"><div class="field" style="flex:1;"><label>Add tags (batch ok — moves them here from wherever they are)</label><input type="text" class="hin" id="hin_' + g + '" data-key="' + g + '" inputmode="numeric" autocomplete="off" placeholder="1234 1456 789"></div><button class="save-btn" style="flex:0 0 auto; padding:11px 18px;" data-act="add" data-g="' + g + '">Add</button></div>';
+}
+function herdGrazeRow(g, total){
+  const gz = herd.graze[g] || HERD_GRAZE_DEFAULT[g] || 100;
+  return '<div style="display:flex; gap:8px; align-items:center; margin-top:12px; padding:8px 10px; background:var(--paper); border:1px solid var(--line); border-radius:8px; flex-wrap:wrap;"><label style="font-size:12px; color:var(--ink-soft); margin:0;">m² / cow</label><input type="number" class="hgraze" data-g="' + g + '" value="' + gz + '" style="width:80px;" inputmode="decimal"><span style="font-family:\'IBM Plex Mono\',monospace; font-size:12px; font-weight:600;">' + (total ? (total * gz).toLocaleString() + ' m² = ' + (total * gz / 10000).toFixed(2) + ' ha for ' + total + ' cows' : '–') + '</span></div>';
+}
+function herdDaysLabel(x, today){ const d = x.since ? Math.max(0, daysBetweenKeys(x.since, today)) : 0; return d === 0 ? 'today' : (d === 1 ? '1 day' : d + ' days'); }
+function herdSectionHead(label, n, green){ return '<div style="font-family:\'IBM Plex Mono\',monospace; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:' + (green ? 'var(--green)' : 'var(--ink-soft)') + '; padding:6px 0 4px; display:flex; justify-content:space-between;"><span>' + label + '</span><span>' + n + '</span></div>'; }
+function herdMilkingCard(st, today){
+  const tags = Object.keys(st).filter(t => st[t].g === 'milking').sort(herdTagSort);
+  const staph = tags.filter(t => st[t].st);
+  const added = tags.filter(t => st[t].since === today), rest = tags.filter(t => st[t].since !== today);
+  let h = '<div style="background:var(--paper); border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:12px;"><div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;"><b style="font-size:12px; text-transform:uppercase; color:var(--ink-soft);">Staph herd (' + staph.length + ')</b><span style="display:flex; gap:6px;"><input type="text" class="hin" id="hin_staph" data-key="staph" placeholder="Tag #" inputmode="numeric" style="width:80px; padding:4px 6px;" autocomplete="off"><button class="hmini" data-act="staphin">Add</button></span></div><div style="font-family:\'IBM Plex Mono\',monospace; font-size:13px; line-height:1.9;">' + (staph.length ? staph.map(t => '<span style="display:inline-flex; align-items:center; gap:2px; margin-right:10px;"><b>' + escapeHtml(t) + '</b><button class="hmini" style="border:none; padding:0 4px;" data-act="staphout" data-tag="' + escapeHtml(t) + '">✕</button></span>').join('') : '<span class="herd-note">None</span>') + '</div></div>';
+  if(added.length) h += herdSectionHead('Added today', added.length, true) + '<div style="display:flex; flex-wrap:wrap; gap:2px 10px; margin-bottom:8px; font-family:\'IBM Plex Mono\',monospace; font-weight:600;">' + added.map(escapeHtml).join(' ').split(' ').map(t => '<span>' + t + '</span>').join('') + '</div>';
+  if(rest.length){
+    if(added.length) h += herdSectionHead('All cows', rest.length, false);
+    const COLS = 6, per = Math.ceil(rest.length / COLS);
+    h += '<div style="display:grid; grid-template-columns:repeat(' + COLS + ',1fr); gap:0 4px;">';
+    for(let ci = 0; ci < COLS; ci++) h += '<div>' + rest.slice(ci * per, (ci + 1) * per).map(t => '<div style="font-family:\'IBM Plex Mono\',monospace; font-size:13px; padding:1px 0;">' + escapeHtml(t) + '</div>').join('') + '</div>';
+    h += '</div>';
+  } else if(!added.length) h += '<span class="herd-note">Empty</span>';
+  h += herdGrazeRow('milking', tags.length) + herdAddForm('milking');
+  return herdCard('milking', 'Milking herd', tags.length ? '— ' + tags.length + ' cows' : '', h, herdCopyBtn('milking'));
+}
+function herdPrevLameNotes(tag){
+  const prev = Object.keys(herd.lame).map(id => herd.lame[id]).filter(l => l.tag === tag && l.cleared);
+  if(!prev.length) return '';
+  return 'Prev: ' + prev.map(l => ((l.feet && l.feet.length) ? l.feet.join('/') : '?') + (l.where ? ' ' + l.where : '') + ' (' + l.cleared + ')').join('; ');
+}
+function herdRecentTreatment(tag, today){ return Object.keys(herd.lame).some(id => { const l = herd.lame[id]; return l.tag === tag && l.cleared && daysBetweenKeys(l.cleared, today) <= 30; }); }
+function herdActiveLame(tag){ const id = Object.keys(herd.lame).find(i => herd.lame[i].tag === tag && !herd.lame[i].cleared); return id ? { id, rec:herd.lame[id] } : null; }
+function herdOadCard(st, today){
+  let tags = Object.keys(st).filter(t => st[t].g === 'oad');
+  const sort = herdUI.oadSort || 'std';
+  const lameOf = {}; tags.forEach(t => { lameOf[t] = herdActiveLame(t); });
+  const score = t => (lameOf[t] ? 2 : 0) + (herd.flags[t] && herd.flags[t].skinny ? 1 : 0);
+  const byTag = (a, b) => herdTagSort(a, b);
+  const byDays = (a, b) => { const d = daysBetweenKeys(st[a].since, today) - daysBetweenKeys(st[b].since, today); return d !== 0 ? -d : byTag(a, b); };
+  const cmp = sort === 'num' ? byTag : sort === 'high' ? ((a, b) => byTag(b, a)) : sort === 'days' ? byDays : ((a, b) => { const d = score(b) - score(a); return d !== 0 ? d : byTag(a, b); });
+  const row = t => {
+    const x = st[t], l = lameOf[t], open = herdUI.lameOpen === t, FEET = ['LF', 'RF', 'LR', 'RR'];
+    const feetNow = l && l.rec.feet ? l.rec.feet : [];
+    let lame = '';
+    const fbtn = (f, act, on) => '<button class="hmini" style="font-size:11px; padding:2px 5px;' + (on ? ' background:var(--rust); color:#fff; border-color:var(--rust);' : '') + '" data-act="' + act + '" data-tag="' + escapeHtml(t) + '" data-f="' + f + '">' + f + '</button>';
+    if(l){
+      lame = '<span style="font-size:11px; background:var(--rust); color:#fff; border-radius:4px; padding:2px 6px; display:inline-flex; gap:4px; align-items:center;"><span data-act="oadlame" data-tag="' + escapeHtml(t) + '" style="cursor:pointer;">Lame: ' + (feetNow.length ? feetNow.join(' ') : '?') + '</span><span data-act="oadlameclear" data-tag="' + escapeHtml(t) + '" style="cursor:pointer; background:rgba(0,0,0,.25); padding:0 4px; border-radius:3px;">✕</span></span>';
+      if(open) lame += ' <span style="display:inline-flex; gap:3px;">' + FEET.map(f => fbtn(f, 'oadfoot', feetNow.includes(f))).join('') + '<button class="hmini" style="font-size:11px; padding:2px 5px;" data-act="oadlame" data-tag="' + escapeHtml(t) + '">Done</button></span>';
+    } else {
+      lame = '<button class="hmini" style="font-size:11px; padding:2px 6px;' + (open ? ' background:var(--rust); color:#fff; border-color:var(--rust);' : '') + '" data-act="oadlame" data-tag="' + escapeHtml(t) + '">' + (open ? '✕ cancel' : 'Lame') + '</button>';
+      if(open) lame += ' <span style="display:inline-flex; gap:3px;">' + FEET.map(f => fbtn(f, 'oadnewfoot', false)).join('') + '<button class="hmini" style="font-size:11px; padding:2px 5px;" data-act="oadnewfoot" data-tag="' + escapeHtml(t) + '" data-f="">?</button></span>';
+    }
+    const sk = herd.flags[t] && herd.flags[t].skinny;
+    return '<div class="hrow"><b style="font-family:\'IBM Plex Mono\',monospace; min-width:46px;">' + escapeHtml(t) + '</b><span style="flex:1; text-align:right; display:flex; gap:6px; align-items:center; justify-content:flex-end; flex-wrap:wrap;">' + (herdRecentTreatment(t, today) ? '<span title="Lame treatment in the last 30 days" style="font-size:10px; font-weight:700; background:var(--amber); color:#fff; border-radius:3px; padding:1px 4px;">T</span>' : '') + '<span style="font-size:11px; color:var(--ink-soft);">' + herdDaysLabel(x, today) + '</span>' + lame + '<button class="hmini" style="font-size:11px; padding:2px 6px;' + (sk ? ' background:var(--amber); color:#fff; border-color:var(--amber);' : '') + '" data-act="skinny1" data-tag="' + escapeHtml(t) + '">Skinny</button></span></div>';
+  };
+  let h = '<div style="display:flex; gap:5px; align-items:center; margin-bottom:10px; flex-wrap:wrap;"><span style="font-size:11px; text-transform:uppercase; color:var(--ink-soft);">Sort</span>' + [['std', 'Standard'], ['num', 'Numerical'], ['high', 'Highest tag'], ['days', 'Days in group']].map(m => '<button class="hmini" style="' + (sort === m[0] ? 'background:var(--green); color:#fff; border-color:var(--green);' : '') + '" data-act="oadsort" data-m="' + m[0] + '">' + m[1] + '</button>').join('') + '</div>';
+  if(sort === 'days' || sort === 'num' || sort === 'high') h += tags.slice().sort(cmp).map(row).join('') || '<span class="herd-note">Empty</span>';
+  else {
+    const added = tags.filter(t => st[t].since === today).sort(cmp), rest = tags.filter(t => st[t].since !== today).sort(cmp);
+    if(added.length) h += herdSectionHead('Added today', added.length, true) + added.map(row).join('');
+    if(rest.length){ if(added.length) h += herdSectionHead('Previous', rest.length, false); h += rest.map(row).join(''); }
+    if(!tags.length) h += '<span class="herd-note">Empty</span>';
+  }
+  h += herdGrazeRow('oad', tags.length) + herdAddForm('oad');
+  return herdCard('oad', 'Once-a-day (OAD)', tags.length ? '— ' + tags.length + ' cows' : '', h, herdCopyBtn('oad'));
+}
+function herdPlainCard(g, st, today){
   const tags = Object.keys(st).filter(t => st[t].g === g.id).sort(herdTagSort);
-  const normal = tags.filter(t => !st[t].st), staph = tags.filter(t => st[t].st);
-  const gz = herd.graze[g.id] || HERD_GRAZE_DEFAULT[g.id] || 100;
-  const total = tags.length, ha = total * gz / 10000;
-  const dests = HERD_GROUPS.filter(x => x.id !== g.id && (!x.calving || herd.calving || (herd.base[x.id] || []).length || Object.keys(st).some(t => st[t].g === x.id)));
-  let h = '<div style="margin-bottom:6px;">' + (normal.length ? normal.map(t => herdChip(t, st[t], g.id)).join('') : '<span class="herd-note">Empty</span>') + '</div>';
-  if(g.id === 'milking') h += '<div class="herd-note" style="margin-top:8px;"><b>Staph herd (' + staph.length + ')</b></div><div>' + (staph.length ? staph.map(t => herdChip(t, st[t], g.id)).join('') : '<span class="herd-note">None</span>') + '</div>';
-  h += '<div class="field" style="margin-top:10px;"><label>Tags (space or comma between) — tap a tag above to add it</label><input type="text" class="hin" id="hin_' + g.id + '" data-key="' + g.id + '" inputmode="numeric" autocomplete="off"></div>';
-  h += '<div class="herd-btnrow"><button class="go" data-act="add" data-g="' + g.id + '">Add to ' + escapeHtml(g.label) + '</button>';
-  h += '<select class="hsel" id="hdest_' + g.id + '" style="flex:1 1 40%; padding:10px 6px; border:1px solid var(--line); border-radius:8px;">' + dests.map(x => '<option value="' + x.id + '">' + escapeHtml(x.label) + '</option>').join('') + '</select>';
-  h += '<button data-act="move" data-g="' + g.id + '">Move there</button></div>';
-  if(g.id === 'milking') h += '<div class="herd-btnrow"><button data-act="staphin">Staph in</button><button data-act="staphout">Staph out</button></div>';
-  if(g.id === 'oad') h += '<div class="herd-btnrow"><button data-act="skinny">Toggle skinny</button></div>';
-  h += '<div class="herd-btnrow"><button class="warn" data-act="out" data-g="' + g.id + '">' + (herdUI.confirm === 'out_' + g.id ? 'Tap again: remove from herd' : 'Remove from herd (sold / dead)') + '</button></div>';
-  h += '<div class="graze-row" style="display:flex; gap:8px; align-items:center; margin-top:6px;"><label style="font-size:12px; color:var(--ink-soft);">m² / cow</label><input type="number" class="hgraze" data-g="' + g.id + '" value="' + gz + '" style="width:80px;" inputmode="decimal"><span class="herd-note" style="margin:0;">' + (total ? (total * gz).toLocaleString() + ' m² = ' + ha.toFixed(1) + ' ha for ' + total : '–') + '</span></div>';
-  h += '<div class="herd-btnrow"><button data-act="copy" data-g="' + g.id + '">Copy tag list</button></div>';
-  return herdCard(g.id, escapeHtml(g.label), total ? '— ' + total + ' cows' : '', h);
+  const added = tags.filter(t => st[t].since === today), rest = tags.filter(t => st[t].since !== today);
+  const row = t => '<div class="hrow"><b style="font-family:\'IBM Plex Mono\',monospace; flex:1;">' + escapeHtml(t) + '</b><span style="font-size:11px; color:var(--ink-soft);">' + herdDaysLabel(st[t], today) + '</span></div>';
+  let h = '';
+  if(added.length) h += herdSectionHead('Added today', added.length, true) + added.map(row).join('');
+  if(rest.length){ if(added.length) h += herdSectionHead('Previous', rest.length, false); h += rest.map(row).join(''); }
+  if(!tags.length) h += '<span class="herd-note">Empty</span>';
+  h += herdGrazeRow(g.id, tags.length) + herdAddForm(g.id);
+  return herdCard(g.id, escapeHtml(g.label), tags.length ? '— ' + tags.length + ' cows' : '', h, herdCopyBtn(g.id));
+}
+function herdGroupCard(g, st, today){ return g.id === 'milking' ? herdMilkingCard(st, today) : g.id === 'oad' ? herdOadCard(st, today) : herdPlainCard(g, st, today); }
+function herdRemoveCard(st){
+  const gone = herdSortedEvents().filter(e => e.to === 'out').slice().reverse().slice(0, 10);
+  let h = '<div class="herd-note">Takes a cow out of every group and records why (sold, died, culled). She stays in Cow search and the movement history.</div><div class="field-row"><div class="field"><label>Tag</label><input type="text" class="hin" id="hin_rm" data-key="rm" inputmode="numeric" autocomplete="off"></div><div class="field"><label>Notes (optional)</label><input type="text" class="hin" id="hin_rmnote" data-key="rmnote" maxlength="100" autocomplete="off" placeholder="e.g. found dead in bay 2"></div></div><div class="herd-btnrow"><button class="warn" data-act="rmcow">' + (herdUI.confirm === 'rmcow' ? 'Tap again to confirm' : 'Remove from herd') + '</button></div>';
+  if(gone.length) h += '<div class="herd-note"><b>Recently removed</b></div>' + gone.map(e => '<div style="font-size:12px; padding:3px 0;"><b style="font-family:\'IBM Plex Mono\',monospace;">' + escapeHtml(e.tag) + '</b> · ' + formatDateNice(e.date) + (e.note ? ' · ' + escapeHtml(e.note) : '') + '</div>').join('');
+  return herdCard('remove', 'Remove cow from herd', '', h);
 }
 function herdLameCard(st){
   const act = Object.keys(herd.lame).filter(id => !herd.lame[id].cleared).sort((a, b) => herdTagSort(herd.lame[a].tag, herd.lame[b].tag));
@@ -1263,6 +1351,12 @@ function herdSearchCard(st, today){
     if(herd.flags[tag] && herd.flags[tag].skinny) h += '<br>Flagged skinny';
     const moves = herdSortedEvents().filter(e => e.tag === tag);
     if(moves.length) h += '<div class="herd-note" style="margin-top:8px;"><b>Movements</b></div>' + moves.map(e => '<div style="font-size:12px;">' + formatDateNice(e.date) + ' — ' + (e.to ? '→ ' + herdGroupLabel(e.to) : '') + (e.st !== undefined ? (e.to ? ', ' : '') + (e.st ? 'staph in' : 'staph out') : '') + '</div>').join('');
+    const cr = calvRecs().filter(r => r.tag === tag);
+    if(cr.length) h += '<div class="herd-note" style="margin-top:8px;"><b>Calving</b></div>' + cr.map(r => '<div style="font-size:12px;">' + formatDateNice(r.date) + ' · Bay ' + bayShort(r.bay) + ' · ' + calvSummaryOf(r) + '</div>').join('');
+    const txs = Object.values(herd.tx).filter(t => t.tag === tag);
+    if(txs.length) h += '<div class="herd-note" style="margin-top:8px;"><b>Treatments</b></div>' + txs.map(t => '<div style="font-size:12px;">' + escapeHtml(t.treatment) + ' · ' + escapeHtml(t.loc || '') + ' · clear ' + formatDateNice(t.date) + '</div>').join('');
+    const outs = herdSortedEvents().filter(e => e.tag === tag && e.to === 'out');
+    if(outs.length) h += '<div style="color:var(--rust); font-size:12px; margin-top:6px;">Out of herd ' + formatDateNice(outs[outs.length - 1].date) + (outs[outs.length - 1].note ? ' — ' + escapeHtml(outs[outs.length - 1].note) : '') + '</div>';
     const lame = Object.keys(herd.lame).map(id => herd.lame[id]).filter(l => l.tag === tag);
     if(lame.length) h += '<div class="herd-note" style="margin-top:8px;"><b>Lame history</b></div>' + lame.map(l => '<div style="font-size:12px;">' + (l.cleared ? 'Cleared ' + formatDateNice(l.cleared) : 'Active') + ' — ' + (l.feet && l.feet.length ? l.feet.map(f => FOOT_LABELS[f] || f).join(', ') : '?') + (l.notes ? ' · ' + escapeHtml(l.notes) : '') + '</div>').join('');
     h += '</div>';
@@ -1299,9 +1393,11 @@ function renderHerd(){
   const sp = herdSplitAt(herdUI.date) || { mode:'number', value:0 };
   const splits = Object.keys(herd.splits).sort().reverse();
   html += herdCard('split', 'Mob split (Herd 1 / Herd 2)', '', '<div class="herd-btnrow"><button class="' + ((herdUI.splitMode || sp.mode) === 'number' ? 'go' : '') + '" data-act="splitmode" data-m="number">Number of cows</button><button class="' + ((herdUI.splitMode || sp.mode) === 'tag' ? 'go' : '') + '" data-act="splitmode" data-m="tag">Highest tag in Herd 1</button></div><div class="field"><label>' + ((herdUI.splitMode || sp.mode) === 'tag' ? 'Highest tag number' : 'Cows in Herd 1') + '</label><input type="number" class="hin" id="hin_split" data-key="split" inputmode="numeric" placeholder="' + sp.value + '"></div><div class="herd-btnrow"><button class="go" data-act="splitsave">Save from ' + formatDateNice(herdUI.date) + '</button></div><div class="herd-note">Herd 2 is everyone else in the milking herd (staph cows are counted separately).</div>' + splits.map(f => '<div style="font-size:12px; display:flex; gap:8px; padding:3px 0;"><span style="flex:1;">From ' + formatDateNice(f) + ': ' + (herd.splits[f].mode === 'tag' ? 'tags ≤ ' : 'first ') + herd.splits[f].value + '</span><button class="hmini" data-act="splitdel" data-f="' + f + '">✕</button></div>').join(''));
-  HERD_GROUPS.forEach(g => { if(g.calving && !herd.calving && !Object.keys(st).some(t => st[t].g === g.id)) return; html += herdGroupCard(g, st, today); });
+  HERD_GROUPS.forEach(g => { if(g.calving && !herd.calving && !Object.keys(st).some(t => st[t].g === g.id)) return; html += (g.calving ? herdCalvingGroupCard(g, st, today) : herdGroupCard(g, st, today)); });
+  html += herdMineralCard(st);
   html += herdLameCard(st);
   html += herdSearchCard(st, today);
+  html += herdRemoveCard(st);
   html += herdCard('tools', 'Export', '', '<div class="herd-btnrow"><button data-act="csv">Download all groups (CSV)</button></div>');
   html += herdLogCard();
   root.innerHTML = html;
@@ -1332,26 +1428,39 @@ document.getElementById('herdRoot').addEventListener('click', async ev => {
   const btn = ev.target.closest('[data-act]'); if(!btn) return;
   const act = btn.dataset.act, g = btn.dataset.g;
   if(act === 'toggle'){ herdUI.open[btn.dataset.id] = !herdUI.open[btn.dataset.id]; btn.closest('.card').classList.toggle('collapsed', !herdUI.open[btn.dataset.id]); return; }
-  herdUI.confirm = (act === 'out' || act === 'lametreat' || act === 'evdel') ? herdUI.confirm : null;
-  if(act === 'pick'){
-    const tag = btn.dataset.tag, input = document.getElementById('hin_' + g); const cur = herdParseTags(input.value);
-    const i = cur.indexOf(tag); if(i >= 0) cur.splice(i, 1); else cur.push(tag);
-    input.value = cur.join(' '); herdUI.inputs[g] = input.value; btn.classList.toggle('sel'); return;
+  herdUI.confirm = (act === 'rmcow' || act === 'lametreat' || act === 'evdel' || act === 'momcol' || act === 'momdel' || act === 'allcol' || act === 'colexit') ? herdUI.confirm : null;
+  if(act === 'add') return herdDoMove(herdParseTags(herdTakeInput(g)), { to:g }, '{n} added to ' + herdGroupLabel(g));
+  if(act === 'staphin') return herdDoMove(herdParseTags(herdTakeInput('staph')), { to:'milking', st:true }, '{n} added to staph herd');
+  if(act === 'staphout') return herdDoMove([btn.dataset.tag], { st:false }, 'Taken off staph herd');
+  if(act === 'skinny1'){ const t = btn.dataset.tag; if(herd.flags[t] && herd.flags[t].skinny) delete herd.flags[t]; else herd.flags[t] = { skinny:true }; herdUI.status = ''; return herdChanged(); }
+  if(act === 'oadsort'){ herdUI.oadSort = btn.dataset.m; return renderHerd(); }
+  if(act === 'oadlame'){ herdUI.lameOpen = herdUI.lameOpen === btn.dataset.tag ? null : btn.dataset.tag; return renderHerd(); }
+  if(act === 'oadnewfoot'){
+    const t = btn.dataset.tag, f = btn.dataset.f; const st = herdStateAt(todayKeyReal()) || {};
+    herd.lame['l' + herdEventId()] = { tag:t, feet:f ? [f] : [], notes:herdPrevLameNotes(t), added:herdUI.date || todayKeyReal(), cleared:null, where:'OAD' };
+    herdUI.lameOpen = null; herdUI.status = ''; return herdChanged();
   }
-  if(act === 'add') return herdDoMove(herdParseTags(herdTakeInput(g)), { to:g }, '{n} added');
-  if(act === 'move'){ const dest = document.getElementById('hdest_' + g).value; return herdDoMove(herdParseTags(herdTakeInput(g)), { to:dest }, '{n} moved to ' + herdGroupLabel(dest)); }
-  if(act === 'staphin') return herdDoMove(herdParseTags(herdTakeInput('milking')), { to:'milking', st:true }, '{n} marked staph');
-  if(act === 'staphout') return herdDoMove(herdParseTags(herdTakeInput('milking')), { st:false }, '{n} taken off staph');
-  if(act === 'skinny'){
-    const tags = herdParseTags(herdTakeInput('oad')); if(!tags.length) return herdStatus('Enter or tap at least one tag.');
-    tags.forEach(t => { if(herd.flags[t] && herd.flags[t].skinny) delete herd.flags[t]; else herd.flags[t] = { skinny:true }; });
-    herdStatus('Skinny flag toggled for ' + tags.length); herdChanged(); return;
+  if(act === 'oadfoot'){
+    const l = herdActiveLame(btn.dataset.tag); if(!l) return;
+    const f = btn.dataset.f, feet = (l.rec.feet || []).slice(), i = feet.indexOf(f); if(i >= 0) feet.splice(i, 1); else feet.push(f);
+    herd.lame[l.id] = Object.assign({}, l.rec, { feet }); return herdChanged();
   }
-  if(act === 'out'){
-    const key = 'out_' + g;
-    if(herdUI.confirm !== key){ herdUI.confirm = key; renderHerd(); return; }
-    herdUI.confirm = null; return herdDoMove(herdParseTags(herdTakeInput(g)), { to:'out' }, '{n} removed from the herd');
+  if(act === 'oadlameclear'){ const l = herdActiveLame(btn.dataset.tag); if(l) delete herd.lame[l.id]; herdUI.lameOpen = null; return herdChanged(); }
+  if(act === 'rmcow'){
+    if(herdUI.confirm !== 'rmcow'){ herdUI.confirm = 'rmcow'; return renderHerd(); }
+    herdUI.confirm = null; const note = herdTakeInput('rmnote').trim();
+    return herdDoMove(herdParseTags(herdTakeInput('rm')), note ? { to:'out', note } : { to:'out' }, '{n} removed from the herd');
   }
+  if(act === 'momcol' || act === 'momdel' || act === 'colexit' || act === 'allcol'){
+    const key = btn.dataset.key;
+    if(herdUI.confirm !== key){ herdUI.confirm = key; return renderHerd(); }
+    herdUI.confirm = null; const tag = btn.dataset.tag;
+    if(act === 'momcol'){ const di = document.querySelector('.hcoldate[data-tag="' + tag + '"]'); return herdDoMove([tag], { to:'colostrum' }, '{n} moved to colostrum', di && di.value ? di.value : undefined); }
+    if(act === 'momdel') return herdDoMove([tag], { to:'out' }, '{n} removed');
+    if(act === 'colexit') return herdDoMove([tag], { to:btn.dataset.dest }, '{n} moved to ' + herdGroupLabel(btn.dataset.dest));
+    const st = herdStateAt(todayKeyReal()) || {}; return herdDoMove(Object.keys(st).filter(t => st[t].g === 'newMoms'), { to:'colostrum' }, '{n} moved to colostrum');
+  }
+  if(act === 'mccopy') return herdCopy('Mineral requirements — ' + formatDateNice(todayKeyReal()) + '\n' + (herdUI.mcLines || []).join('\n'), 'Copied');
   if(act === 'copy'){
     const st = herdStateAt(todayKeyReal()) || {};
     const tags = Object.keys(st).filter(t => st[t].g === g).sort(herdTagSort);
@@ -1361,7 +1470,7 @@ document.getElementById('herdRoot').addEventListener('click', async ev => {
   if(act === 'lameadd'){
     const tag = herdParseTags(herdTakeInput('lame'))[0]; if(!tag) return herdStatus('Enter a tag number.');
     const st = herdStateAt(todayKeyReal()) || {};
-    herd.lame['l' + herdEventId()] = { tag, feet:herdUI.feet.slice(), notes:herdTakeInput('lamenote').trim(), added:herdUI.date || todayKeyReal(), cleared:null, where:st[tag] ? herdGroupLabel(st[tag].g) : '' };
+    herd.lame['l' + herdEventId()] = { tag, feet:herdUI.feet.slice(), notes:(herdTakeInput('lamenote').trim() || herdPrevLameNotes(tag)), added:herdUI.date || todayKeyReal(), cleared:null, where:st[tag] ? herdGroupLabel(st[tag].g) : '' };
     herdUI.feet = []; herdUI.status = 'Lame cow ' + tag + ' recorded'; return herdChanged();
   }
   if(act === 'lametreat'){
@@ -1402,11 +1511,344 @@ document.getElementById('herdRoot').addEventListener('change', ev => {
   const v = parseFloat(el.value); if(!v || v <= 0) return;
   herd.graze[el.dataset.g] = v; herdChanged();
 });
+document.getElementById('herdRoot').addEventListener('input', ev => { const el = ev.target.closest('.hmc'); if(!el) return; calvUI.mc[el.dataset.k] = parseInt(el.value, 10) || 0; const st = herdStateAt(todayKeyReal()) || {}; });
+document.getElementById('herdRoot').addEventListener('change', ev => { if(ev.target.closest('.hmc')) renderHerd(); });
 document.getElementById('herdDate').addEventListener('change', e => { herdUI.date = e.target.value || todayKeyReal(); renderHerd(); });
+
+function renderLameHistory(){
+  const out = document.getElementById('lameHistOut'); if(!out) return;
+  const f = (document.getElementById('lameHistTag').value || '').trim();
+  const all = Object.keys(herd.lame).map(id => Object.assign({ id }, herd.lame[id]));
+  if(!all.length){ out.innerHTML = '<div class="herd-note">No lame cows recorded yet. Record them on the Herd tab.</div>'; return; }
+  const recs = all.filter(l => !f || l.tag === f).sort((a, b) => (b.added || '') < (a.added || '') ? -1 : 1);
+  const per = {}; all.forEach(l => { per[l.tag] = (per[l.tag] || 0) + 1; });
+  const repeat = Object.keys(per).filter(t => per[t] > 1).sort((a, b) => per[b] - per[a] || herdTagSort(a, b));
+  const months = {}; all.forEach(l => { const m = (l.added || '').slice(0, 7); if(m) months[m] = (months[m] || 0) + 1; });
+  let h = '';
+  if(!f){
+    h += '<div class="herd-note"><b>' + all.length + ' records · ' + Object.keys(per).length + ' cows · ' + all.filter(l => !l.cleared).length + ' still lame</b></div>';
+    h += '<div class="herd-note">By month: ' + Object.keys(months).sort().reverse().map(m => m + ' ' + months[m]).join(' · ') + '</div>';
+    if(repeat.length) h += '<div class="herd-note"><b>Repeat cases:</b> ' + repeat.slice(0, 20).map(t => t + ' (' + per[t] + ')').join(', ') + '</div>';
+  }
+  h += recs.length ? recs.slice(0, 60).map(l => '<div style="font-size:12px; padding:5px 0; border-bottom:1px solid var(--line);"><b style="font-family:\'IBM Plex Mono\',monospace;">' + escapeHtml(l.tag) + '</b> · ' + (l.feet && l.feet.length ? l.feet.map(x => FOOT_LABELS[x] || x).join(', ') : 'foot not recorded') + ' · ' + (l.added ? formatDateNice(l.added) : '') + (l.cleared ? ' → treated ' + formatDateNice(l.cleared) : ' · still lame') + (l.where ? ' · ' + escapeHtml(l.where) : '') + (l.notes ? '<br><span style="color:var(--ink-soft);">' + escapeHtml(l.notes) + '</span>' : '') + '</div>').join('') : '<div class="herd-note">No records for that tag.</div>';
+  if(recs.length > 60) h += '<div class="herd-note">Showing the latest 60 of ' + recs.length + '.</div>';
+  out.innerHTML = h;
+}
+document.getElementById('lameHistTag').addEventListener('input', renderLameHistory);
 function syncHerdSettings(){
+  try{ updateCalvTab(); }catch(e){}
   const el = document.getElementById('herdCalvingToggle'); if(el) el.checked = !!herd.calving;
 }
-document.getElementById('herdCalvingToggle').addEventListener('change', e => { herd.calving = e.target.checked; herdChanged(); });
+document.getElementById('herdCalvingToggle').addEventListener('change', e => { herd.calving = e.target.checked; updateCalvTab(); herdChanged(); });
+
+
+// ---------- CALVING (behind Settings → Calving season) ----------
+const CALV_BAYS = ['Bay 1', 'Bay 2', 'Bay 3', 'Bay 4', 'Bay 5', 'Bay 6', 'Penicillin Paddock'];
+const CALV_TYPE_LABEL = { Keeper:'Keeper', Hereford:'HF', Bobby:'Bob' };
+const calvUI = { watchStatus:null, watchBay:null, directBay:null, directDate:null, tally:{ H:0, B:0, HF:0, D:0 }, tallyBay:null, expanded:new Set(), collapsedBays:new Set(), histEdit:null, confirm:null, status:'', mc:{} };
+function bayShort(b){ return b === 'Penicillin Paddock' ? 'P' : (b ? String(b).replace('Bay ', '') : '?'); }
+function calvRecs(){ return Object.keys(herd.calv).map(id => Object.assign({ id }, herd.calv[id])); }
+function calvActive(){ return calvRecs().filter(r => !r.arch); }
+function calvLatestFor(tag){ const r = calvRecs().filter(x => x.tag === tag).sort((a, b) => (b.date || '') < (a.date || '') ? -1 : 1); return r[0] || null; }
+function calvSet(id, patch){ herd.calv[id] = Object.assign({}, herd.calv[id], patch); calvChanged(); }
+function calvChanged(){ herdChanged(); }
+function calvNewId(){ return 'c' + herdEventId(); }
+function calvUsedKeepers(exceptId){
+  const used = new Set();
+  calvRecs().forEach(r => { if(r.id === exceptId) return; if(r.ktag) used.add(Number(r.ktag)); if(r.tktag) used.add(Number(r.tktag)); });
+  return used;
+}
+function calvSummaryOf(r){
+  const one = (sex, type, kt, dead) => (sex || '?') + '·' + (type ? (type === 'Keeper' ? 'K' : CALV_TYPE_LABEL[type]) : '?') + (kt ? '#' + kt : '') + (dead ? ' ☠' : '');
+  return one(r.sex, r.type, r.ktag, r.dead) + (r.twins ? ' + ' + one(r.tsex, r.ttype, r.tktag, r.tdead) : '') + (r.gold ? ' 🥛' : '');
+}
+function calfEditor(r, tw){
+  const sex = tw ? r.tsex : r.sex, type = tw ? r.ttype : r.type, kt = tw ? r.tktag : r.ktag, dead = tw ? r.tdead : r.dead;
+  const opts = sex === 'H' ? ['Keeper', 'Hereford', 'Bobby'] : sex === 'B' ? ['Bobby', 'Hereford'] : [];
+  const b = (act, v, on, label, extra) => '<button class="hmini" style="font-size:12px; padding:5px 9px;' + (on ? ' background:var(--green); color:#fff; border-color:var(--green);' : '') + (extra || '') + '" data-cact="' + act + '" data-id="' + r.id + '" data-tw="' + (tw ? 1 : 0) + '" data-v="' + v + '">' + label + '</button>';
+  let h = '<div style="display:flex; gap:5px; flex-wrap:wrap; align-items:center;">' + b('sex', 'H', sex === 'H', 'H') + b('sex', 'B', sex === 'B', 'B') + opts.map(t => b('type', t, type === t, CALV_TYPE_LABEL[t])).join('');
+  h += b('dead', '1', dead, '☠', dead ? ' background:var(--rust); border-color:var(--rust);' : '');
+  if(!tw) h += b('twins', '1', r.twins, '👯');
+  if(type === 'Keeper' && !dead){
+    const used = calvUsedKeepers(r.id), avail = []; for(let t = 1; t <= 350; t++) if(!used.has(t) || t === Number(kt)) avail.push(t);
+    h += '<select class="calf-kt" data-id="' + r.id + '" data-tw="' + (tw ? 1 : 0) + '" style="padding:5px; border:1px solid var(--line); border-radius:6px; font-size:12px;"><option value="">Tag #</option>' + avail.map(t => '<option' + (Number(kt) === t ? ' selected' : '') + '>' + t + '</option>').join('') + '</select>';
+  }
+  return h + '</div>';
+}
+function calvReady(r){
+  const one = (sex, type, kt, dead) => sex && type && (dead || type !== 'Keeper' || kt);
+  return one(r.sex, r.type, r.ktag, r.dead) && (!r.twins || one(r.tsex, r.ttype, r.tktag, r.tdead));
+}
+function calvEditorBlock(r){
+  let h = '<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:6px; padding-top:6px; border-top:1px dashed var(--line);"><span style="font-size:12px;">📅</span><input type="date" class="calv-date" data-id="' + r.id + '" value="' + (r.date || '') + '" style="width:140px; padding:4px;"><button class="hmini" style="' + (r.gold ? 'background:#b8860b; color:#fff; border-color:#b8860b;' : '') + '" data-cact="gold" data-id="' + r.id + '">🥛 Gold</button>';
+  if(herdUI.calvEditBay === r.id || r.arch){ h += '<select class="calv-bay" data-id="' + r.id + '" style="padding:4px; border:1px solid var(--line); border-radius:6px;">' + CALV_BAYS.map(b => '<option' + (r.bay === b ? ' selected' : '') + '>' + b + '</option>').join('') + '</select>'; }
+  h += '</div><div style="margin-top:6px; padding-top:6px; border-top:1px dashed var(--line);">' + calfEditor(r, false) + '</div>';
+  if(r.twins) h += '<div style="margin-top:6px; padding-top:6px; border-top:1px dashed var(--line);"><span style="font-size:11px; color:var(--ink-soft);">TWIN</span>' + calfEditor(r, true) + '</div>';
+  return h;
+}
+function calvConfirmBtn(key, act, id, label, cls){ const armed = calvUI.confirm === key; return '<button class="hmini" style="' + (armed ? 'background:var(--amber); color:#fff; border-color:var(--amber);' : '') + (cls || '') + '" data-cact="' + act + '" data-id="' + id + '" data-key="' + key + '">' + (armed ? label + '?' : label) + '</button>'; }
+function calvBanner(){
+  const recs = calvRecs(); let bob = 0, hf = 0, keep = 0, dead = 0, hi = 0;
+  recs.forEach(r => {
+    [[r.type, r.ktag, r.dead], r.twins ? [r.ttype, r.tktag, r.tdead] : null].forEach(c => { if(!c) return; if(c[0] === 'Bobby') bob++; else if(c[0] === 'Hereford') hf++; else if(c[0] === 'Keeper'){ keep++; if(c[1]) hi = Math.max(hi, Number(c[1])); } if(c[2]) dead++; });
+  });
+  const col = (l, v, sub) => '<div style="text-align:center; padding:4px 8px;"><div style="font-size:10px; text-transform:uppercase; color:rgba(255,255,255,.7);">' + l + '</div><div style="font-size:22px; font-weight:700; color:#fff; line-height:1;">' + v + '</div>' + (sub ? '<div style="font-size:10px; color:rgba(255,255,255,.6);">' + sub + '</div>' : '') + '</div>';
+  return '<div style="background:var(--green); border-radius:10px; padding:10px; margin-bottom:14px; display:flex; justify-content:space-around; flex-wrap:wrap;">' + col('Total', bob + hf + keep, '') + col('Bobby', bob, '') + col('HF', hf, '') + col('Keeper', keep, hi ? 'high #' + hi : '') + col('☠ Dead', dead, '') + '</div>';
+}
+function calvBaysCard(){
+  const tot = CALV_BAYS.reduce((a, b) => a + (herd.bays[b] || 0), 0);
+  const h = '<div class="herd-counts">' + CALV_BAYS.map(b => '<div><input type="number" class="calv-bay-n" data-bay="' + b + '" value="' + (herd.bays[b] || 0) + '" inputmode="numeric" style="width:100%; text-align:center; font-size:20px; font-weight:700; border:none; background:none; padding:0;"><span>' + b + '</span></div>').join('') + '<div style="background:var(--green); color:#fff;"><b>' + tot + '</b><span style="color:#fff;">All bays</span></div></div>';
+  return herdCard('c_bays', 'Headcounts by bay', '', h);
+}
+function calvWatchCard(){
+  const w = Object.keys(herd.watch).map(id => Object.assign({ id }, herd.watch[id]));
+  const bayBtns = CALV_BAYS.map(b => '<button class="hmini" style="' + (calvUI.watchBay === b ? 'background:var(--green); color:#fff; border-color:var(--green);' : '') + '" data-cact="watchbay" data-v="' + b + '">' + bayShort(b) + '</button>').join(' ');
+  const stBtns = ['Calving', 'Close', 'Other'].map(s => '<button class="hmini" style="' + (calvUI.watchStatus === s ? 'background:var(--green); color:#fff; border-color:var(--green);' : '') + '" data-cact="watchstatus" data-v="' + s + '">' + s + '</button>').join(' ');
+  const colour = { Calving:'var(--rust)', Close:'var(--amber)', Other:'var(--green)' };
+  let h = '';
+  if(!w.length) h += '<span class="herd-note">No cows on watch</span>';
+  else CALV_BAYS.concat(['Unknown']).forEach(bay => {
+    const rows = w.filter(x => (x.loc || 'Unknown') === bay).sort((a, b) => herdTagSort(a.tag, b.tag)); if(!rows.length) return;
+    h += herdSectionHead(bay, rows.length, false) + rows.map(x => '<div class="hrow"><b style="font-family:\'IBM Plex Mono\',monospace; min-width:46px;">' + escapeHtml(x.tag) + '</b><span style="flex:1;"><span style="font-size:11px; color:#fff; background:' + colour[x.status] + '; border-radius:4px; padding:1px 6px;">' + x.status + '</span></span>' + calvConfirmBtn('wc_' + x.id, 'watchcalved', x.id, '→ Calved') + calvConfirmBtn('wd_' + x.id, 'watchdel', x.id, '✕') + '</div>').join('');
+  });
+  h += '<div style="border-top:1px dashed var(--line); margin-top:12px; padding-top:10px;"><div class="herd-note">Bay</div><div style="display:flex; gap:5px; flex-wrap:wrap;">' + bayBtns + '</div><div class="herd-note">Status</div><div style="display:flex; gap:5px;">' + stBtns + '</div><div style="display:flex; gap:8px; align-items:flex-end; margin-top:8px;"><div class="field" style="flex:1;"><label>Tag #</label><input type="text" id="calv_watchtag" inputmode="numeric" autocomplete="off"></div><button class="save-btn" style="flex:0 0 auto; padding:11px 18px;" data-cact="watchadd">Add</button></div></div>';
+  return herdCard('c_watch', 'Watch list', w.length ? '— ' + w.length + ' cows' : '', h);
+}
+function calvTallyCard(){
+  const t = calvUI.tally, tot = t.H + t.B + t.HF + t.D;
+  const cell = (k, l, red) => '<div style="text-align:center;"><div style="font-size:10px; text-transform:uppercase; color:var(--ink-soft);">' + l + '</div><div style="font-size:30px; font-weight:700; color:' + (red ? 'var(--rust)' : 'var(--green)') + ';">' + t[k] + '</div><div style="display:flex; gap:4px; justify-content:center;"><button class="hmini" style="width:34px; height:34px;" data-cact="tally" data-v="' + k + '" data-d="-1">−</button><button class="hmini" style="width:34px; height:34px; background:' + (red ? 'var(--rust)' : 'var(--green)') + '; color:#fff;" data-cact="tally" data-v="' + k + '" data-d="1">+</button></div></div>';
+  const snaps = Object.keys(herd.tallies).sort().map(id => '<div style="display:flex; justify-content:space-between; font-size:12px; padding:4px 0; border-bottom:1px dashed var(--line); color:var(--ink-soft);"><span>' + escapeHtml(herd.tallies[id].text) + '</span><button class="hmini" data-cact="tallydel" data-id="' + id + '">✕</button></div>').join('');
+  const h = '<div style="display:flex; justify-content:space-around; flex-wrap:wrap; gap:8px;">' + cell('H', 'Heifer') + cell('B', 'Bull') + cell('HF', 'HF') + cell('D', '☠ Dead', true) + '</div><div class="herd-note" style="margin-top:10px;">Bay</div><div style="display:flex; gap:5px; flex-wrap:wrap;">' + CALV_BAYS.map(b => '<button class="hmini" style="' + (calvUI.tallyBay === b ? 'background:var(--green); color:#fff; border-color:var(--green);' : '') + '" data-cact="tallybay" data-v="' + b + '">' + bayShort(b) + '</button>').join('') + '</div><div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px;"><span style="font-size:12px;">Total: <b>' + tot + '</b></span><span style="display:flex; gap:6px;"><button class="hmini" data-cact="tallysave">Save &amp; reset</button><button class="hmini" data-cact="tallyreset">Reset</button></span></div>' + snaps;
+  return herdCard('c_tally', 'Calf tally <span style="font-weight:400; font-size:12px; color:var(--ink-soft);">— scratchpad</span>', '', h);
+}
+function calvCalvedCard(){
+  const act = calvActive();
+  const groups = {}; act.forEach(r => { const b = r.bay || 'Unknown'; (groups[b] = groups[b] || []).push(r); });
+  const order = CALV_BAYS.concat(['Unknown']).filter(b => groups[b]);
+  let h = '';
+  if(!act.length) h += '<span class="herd-note">No calved cows to process</span>';
+  order.forEach(bay => {
+    const cows = groups[bay], key = 'cb_' + bay, collapsed = calvUI.collapsedBays.has(key);
+    let b = 0, k = 0, hf = 0, d = 0; cows.forEach(c => { [[c.type, c.dead], c.twins ? [c.ttype, c.tdead] : null].forEach(x => { if(!x) return; if(x[0] === 'Bobby') b++; else if(x[0] === 'Keeper') k++; else if(x[0] === 'Hereford') hf++; if(x[1]) d++; }); });
+    const parts = [b ? 'B:' + b : '', k ? 'K:' + k : '', hf ? 'HF:' + hf : '', d ? '☠:' + d : ''].filter(Boolean).join(' · ');
+    h += '<div style="margin-bottom:8px;"><div data-cact="baytoggle" data-v="' + key + '" style="display:flex; justify-content:space-between; padding:6px; border:1px solid var(--line); border-radius:6px; background:var(--paper); cursor:pointer; font-size:12px; text-transform:uppercase;"><span>' + (collapsed ? '▸' : '▾') + ' ' + bay + (parts ? ' · ' + parts : '') + '</span><span>' + cows.length + '</span></div>';
+    if(!collapsed) h += cows.map(r => {
+      const ex = calvUI.expanded.has(r.id);
+      const fresh = calvReady(r) ? calvConfirmBtn('cf_' + r.id, 'tofresh', r.id, '→ Fresh', 'background:var(--green); color:#fff; border-color:var(--green);') : '';
+      return '<div style="border:1px solid var(--line); border-radius:6px; padding:7px 10px; margin-top:4px;"><div style="display:flex; justify-content:space-between; align-items:center; gap:6px;"><div data-cact="expand" data-id="' + r.id + '" style="display:flex; gap:6px; align-items:center; flex:1; cursor:pointer; min-width:0;"><span style="font-size:11px;">' + (ex ? '▾' : '▸') + '</span><b style="font-family:\'IBM Plex Mono\',monospace;">' + escapeHtml(r.tag) + '</b><span style="font-size:11px; background:var(--paper); border:1px solid var(--line); border-radius:3px; padding:0 4px;">' + bayShort(r.bay) + '</span><span style="font-size:11px; color:var(--ink-soft); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + calvSummaryOf(r) + '</span></div><span style="display:flex; gap:5px;">' + (ex ? '' : fresh) + calvConfirmBtn('cd_' + r.id, 'calvdel', r.id, '✕') + '</span></div>' + (ex ? calvEditorBlock(r) + '<div style="margin-top:6px; text-align:right;">' + fresh + '</div>' : '') + '</div>';
+    }).join('');
+    h += '</div>';
+  });
+  if(act.length){
+    const bt = order.map(b => bayShort(b) + ' <b>' + groups[b].length + '</b>').join(' · ');
+    h += '<div style="border-top:2px solid var(--line); padding-top:8px; margin-top:6px; font-size:12px;"><b>Total: ' + act.length + '</b> · ' + bt + '</div>';
+    h += '<div class="herd-btnrow">' + (calvUI.confirm === 'clearall' ? '<button class="warn" data-cact="clearall">Archive all to history and clear?</button><button data-cact="cancelconfirm">Cancel</button>' : '<button data-cact="clearall">Clear calved list</button>') + '</div>';
+  }
+  const bayBtns = CALV_BAYS.map(b => '<button class="hmini" style="' + (calvUI.directBay === b ? 'background:var(--green); color:#fff; border-color:var(--green);' : '') + '" data-cact="directbay" data-v="' + b + '">' + bayShort(b) + '</button>').join(' ');
+  h += '<div style="border-top:1px dashed var(--line); margin-top:12px; padding-top:10px;"><div class="herd-note">Add a calved cow directly — bay</div><div style="display:flex; gap:5px; flex-wrap:wrap;">' + bayBtns + '</div><div style="display:flex; gap:8px; align-items:flex-end; margin-top:8px; flex-wrap:wrap;"><div class="field" style="flex:0 0 140px;"><label>Date</label><input type="date" id="calv_directdate" value="' + (calvUI.directDate || todayKeyReal()) + '"></div><div class="field" style="flex:1;"><label>Tag #</label><input type="text" id="calv_directtag" inputmode="numeric" autocomplete="off"></div><button class="save-btn" style="flex:0 0 auto; padding:11px 18px;" data-cact="directadd">Add</button></div></div>';
+  return herdCard('c_calved', 'Calved', act.length ? '— ' + act.length + ' cows' : '', h, '<button class="hmini" style="margin-left:auto; margin-right:8px;" data-cact="copycalved">Copy list</button>');
+}
+function calvHistoryCard(){
+  const recs = calvRecs(); let h = '';
+  if(!recs.length) h = '<span class="herd-note">No calving records yet</span>';
+  const byDate = {}; recs.forEach(r => { (byDate[r.date || '?'] = byDate[r.date || '?'] || []).push(r); });
+  Object.keys(byDate).sort().reverse().forEach(d => {
+    const cows = byDate[d], key = 'h_' + d, open = calvUI.expanded.has(key);
+    let k = 0, b = 0, hf = 0, dd = 0; cows.forEach(c => { [[c.type, c.dead], c.twins ? [c.ttype, c.tdead] : null].forEach(x => { if(!x) return; if(x[0] === 'Keeper') k++; else if(x[0] === 'Bobby') b++; else if(x[0] === 'Hereford') hf++; if(x[1]) dd++; }); });
+    const sum = [k ? k + 'K' : '', b ? b + 'B' : '', hf ? hf + 'HF' : '', cows.filter(c => c.twins).length ? cows.filter(c => c.twins).length + ' twins' : '', dd ? dd + ' ☠' : ''].filter(Boolean).join(' · ');
+    h += '<div style="border:1px solid var(--line); border-radius:6px; margin-bottom:6px;"><div data-cact="expand" data-id="' + key + '" style="padding:9px 10px; cursor:pointer; display:flex; justify-content:space-between; font-size:12px;"><b>' + (d === '?' ? 'No date' : formatDateNice(d)) + '</b><span style="color:var(--ink-soft);">' + cows.length + ' cows · ' + sum + '</span></div>';
+    if(open) h += '<div style="padding:0 10px 10px;">' + cows.sort((a, b) => herdTagSort(a.tag, b.tag)).map(r => {
+      const died = Object.values(herd.events).some(e => e.tag === r.tag && e.to === 'out' && e.date >= (r.date || ''));
+      const editing = calvUI.histEdit === r.id;
+      return '<div style="padding:6px 0; border-bottom:1px solid var(--line);"><div style="display:flex; gap:8px; align-items:center; font-size:12px;"><b style="font-family:\'IBM Plex Mono\',monospace;">' + escapeHtml(r.tag) + '</b><span>Bay ' + bayShort(r.bay) + '</span><span style="flex:1; font-family:\'IBM Plex Mono\',monospace;">' + calvSummaryOf(r) + (died ? ' <span style="color:var(--rust);">COW OUT</span>' : '') + '</span><button class="hmini" data-cact="histedit" data-id="' + r.id + '">' + (editing ? 'Done' : 'Edit') + '</button></div>' + (editing ? calvEditorBlock(r) + '<div style="margin-top:8px;">' + calvConfirmBtn('hd_' + r.id, 'calvdel', r.id, 'Delete record', 'background:var(--rust); color:#fff; border-color:var(--rust);') + '</div>' : '') + '</div>';
+    }).join('') + '</div>';
+    h += '</div>';
+  });
+  return herdCard('c_hist', 'Calving history', '', h);
+}
+function calvTxCard(){
+  const tx = Object.keys(herd.tx).map(id => Object.assign({ id }, herd.tx[id])).sort((a, b) => (a.date || '') < (b.date || '') ? -1 : 1);
+  const today = todayKeyReal();
+  const badge = d => { const diff = daysBetweenKeys(today, d); return diff < 0 ? '<span style="color:var(--green);">Cleared</span>' : diff === 0 ? '<span style="color:var(--amber);">Today</span>' : '<span style="color:' + (diff <= 7 ? 'var(--amber)' : 'var(--rust)') + ';">' + diff + 'd</span>'; };
+  let h = tx.length ? tx.map(t => '<div class="hrow" style="font-size:12px;"><b style="font-family:\'IBM Plex Mono\',monospace; min-width:46px;">' + escapeHtml(t.tag) + '</b><span style="flex:1;">' + escapeHtml(t.loc || '') + ' · ' + escapeHtml(t.treatment || '') + '<br><span style="color:var(--ink-soft);">Clear ' + formatDateNice(t.date) + '</span></span>' + badge(t.date) + calvConfirmBtn('tx_' + t.id, 'txdel', t.id, '✕') + '</div>').join('') : '<span class="herd-note">No animals under treatment</span>';
+  h += '<div style="border-top:1px dashed var(--line); margin-top:12px; padding-top:10px;"><div class="field-row"><div class="field"><label>Tag #</label><input type="text" id="calv_txtag" inputmode="numeric" autocomplete="off"></div><div class="field"><label>Location</label><select id="calv_txloc">' + CALV_BAYS.concat(['OAD', 'Herd']).map(b => '<option>' + b + '</option>').join('') + '</select></div></div><div class="field-row"><div class="field"><label>Treatment / reason</label><input type="text" id="calv_txreason" autocomplete="off" placeholder="Penicillin"></div><div class="field"><label>Meat withhold date</label><input type="date" id="calv_txdate"></div></div><div class="herd-btnrow"><button class="go" data-cact="txadd">Add</button></div></div>';
+  return herdCard('c_tx', 'Dry cow treatments & meat withholding', tx.length ? '— ' + tx.length : '', h);
+}
+function renderCalving(){
+  const root = document.getElementById('calvRoot'); if(!root) return;
+  const keep = {}; root.querySelectorAll('input[id^="calv_"], select[id^="calv_"]').forEach(el => { keep[el.id] = el.value; });
+  let html = '';
+  if(calvUI.status) html += '<div class="status-msg" style="text-align:left; margin:0 0 10px; color:var(--ink);">' + escapeHtml(calvUI.status) + '</div>';
+  html += calvBanner() + calvBaysCard() + calvWatchCard() + calvTallyCard() + calvCalvedCard() + calvHistoryCard() + calvTxCard();
+  html += herdCard('c_import', 'Bring in Dairy Assistant calving data', '', '<div class="herd-note">Copies the watch list, calved list, calving history, treatments, bay counts and heifer-bay setting. Safe to run again — records keep the same ids, so nothing doubles up.</div><div class="herd-btnrow"><button data-cact="d1calving">Import from Dairy Assistant</button></div><div class="herd-note">Or paste its export:</div><textarea id="calv_paste" style="width:100%; min-height:60px; border:1px solid var(--line); border-radius:8px; padding:8px; font-size:11px;"></textarea><div class="herd-btnrow"><button data-cact="pasteimport">Import pasted code</button></div>' + '<div class="field" style="margin-top:8px;"><label>Heifer bay (cows calving here start with 1 colostrum dot)</label><select id="calv_heifer">' + CALV_BAYS.slice(0, 6).map(b => '<option' + (herd.heifer === b ? ' selected' : '') + '>' + b + '</option>').join('') + '</select></div>');
+  root.innerHTML = html;
+  Object.keys(keep).forEach(id => { const el = document.getElementById(id); if(el && keep[id] !== '' && el.tagName !== 'SELECT') el.value = keep[id]; });
+}
+function calvFlash(msg){ calvUI.status = msg; renderCalving(); }
+function calvCopyCalved(){
+  const lines = ['Calving — ' + formatDateNice(todayKeyReal()), ''];
+  const act = calvActive(), g = {}; act.forEach(r => { (g[r.bay || 'Unknown'] = g[r.bay || 'Unknown'] || []).push(r.tag); });
+  if(act.length){ lines.push('CALVED'); CALV_BAYS.concat(['Unknown']).filter(b => g[b]).forEach(b => lines.push(b + ' (' + g[b].length + '): ' + g[b].join(', '))); lines.push(''); }
+  const w = Object.values(herd.watch), wg = {}; w.forEach(x => { (wg[x.loc || 'Unknown'] = wg[x.loc || 'Unknown'] || []).push(x.tag + ' (' + x.status + ')'); });
+  if(w.length){ lines.push('WATCH'); CALV_BAYS.concat(['Unknown']).filter(b => wg[b]).forEach(b => lines.push(b + ' (' + wg[b].length + '): ' + wg[b].join(', '))); }
+  if(!act.length && !w.length) return calvFlash('Nothing to copy');
+  herdCopy(lines.join('\n').trim(), 'Copied');
+  calvUI.status = 'Copied';
+}
+function calvAddRecord(tag, date, bay){
+  const season = calvRecs().find(r => r.tag === tag && r.date && Math.abs(daysBetweenKeys(r.date, date)) < 240);
+  if(season){ calvUI.expanded.add(season.id); return null; }
+  const id = calvNewId(); herd.calv[id] = { tag, date, bay:bay || null, arch:false };
+  return id;
+}
+function calvMoveToFresh(id){
+  const r = herd.calv[id]; if(!r) return;
+  if(!herd.cutover) return calvFlash('Start herd tracking first (Herd tab).');
+  const date = todayKeyReal();
+  herd.events[herdEventId()] = { tag:r.tag, to:'newMoms', date };
+  if(r.bay && herd.bays[r.bay] !== undefined) herd.bays[r.bay] = Math.max(0, (herd.bays[r.bay] || 0) - 1);
+  herd.calv[id] = Object.assign({}, r, { arch:true });
+  calvUI.status = 'Tag ' + r.tag + ' moved to New moms'; calvChanged();
+}
+function calvImport(d){
+  let n = 0;
+  const mk = (r, arch) => ({ tag:String(r.tag), date:r.dateCalved || todayKeyReal(), bay:r.bay || null, sex:r.sex || null, type:r.calfType || null, ktag:r.keeperTag || null, dead:!!r.calfDead, twins:!!r.twins, tsex:r.twinSex || null, ttype:r.twinType || null, tktag:r.twinKeeperTag || null, tdead:!!r.twinDead, gold:!!r.gold, arch:arch });
+  (d.calvingHistory || []).forEach(r => { herd.calv['d1_' + r.id] = mk(r, true); n++; });
+  (d.calvedList || []).forEach(r => { herd.calv['d1_' + r.id] = mk(r, false); n++; });
+  (d.watchList || []).forEach(w => { herd.watch['d1_' + w.id] = { tag:String(w.tag), status:w.status || 'Other', loc:w.location || null, added:w.dateAdded || todayKeyReal() }; n++; });
+  (d.treatments || []).forEach(t => { herd.tx['d1_' + t.id] = { tag:String(t.tag), loc:t.location || '', treatment:t.treatment || '', date:t.meatWithholdDate || todayKeyReal() }; n++; });
+  (d.tallySnapshots || []).forEach(t => { herd.tallies['d1_' + t.id] = { text:t.text }; });
+  if(d.bays) Object.keys(d.bays).forEach(b => { herd.bays[b] = d.bays[b]; });
+  if(d.heiferBay) herd.heifer = d.heiferBay;
+  (d.cowDeaths || []).forEach(x => { const id = 'd1_' + x.id; if(!herd.events[id]) herd.events[id] = { tag:String(x.tag), to:'out', date:x.date || todayKeyReal(), note:x.notes || 'died' }; });
+  return n;
+}
+document.getElementById('calvRoot').addEventListener('click', async ev => {
+  const btn = ev.target.closest('[data-cact]'); if(!btn) return;
+  const act = btn.dataset.cact, id = btn.dataset.id, v = btn.dataset.v, tw = btn.dataset.tw === '1';
+  const armed = calvUI.confirm; calvUI.confirm = null; calvUI.status = '';
+  const arm = key => { if(armed === key) return true; calvUI.confirm = key; renderCalving(); return false; };
+  const today = todayKeyReal();
+  if(act === 'cancelconfirm') return renderCalving();
+  if(act === 'watchbay'){ calvUI.watchBay = v; return renderCalving(); }
+  if(act === 'watchstatus'){ calvUI.watchStatus = v; return renderCalving(); }
+  if(act === 'watchadd'){
+    const tag = (document.getElementById('calv_watchtag').value || '').trim();
+    if(!tag) return calvFlash('Enter a tag number.'); if(!calvUI.watchStatus) return calvFlash('Pick a status first.'); if(!calvUI.watchBay) return calvFlash('Pick a bay first.');
+    if(calvActive().some(r => r.tag === tag)) return calvFlash('Tag ' + tag + ' has already calved.');
+    Object.keys(herd.watch).forEach(k => { if(herd.watch[k].tag === tag) delete herd.watch[k]; });
+    herd.watch['w' + herdEventId()] = { tag, status:calvUI.watchStatus, loc:calvUI.watchBay, added:today };
+    document.getElementById('calv_watchtag').value = ''; return calvChanged();
+  }
+  if(act === 'watchdel'){ if(!arm(btn.dataset.key)) return; delete herd.watch[id]; return calvChanged(); }
+  if(act === 'watchcalved'){
+    if(!arm(btn.dataset.key)) return; const w = herd.watch[id]; if(!w) return;
+    const rid = calvAddRecord(w.tag, today, w.loc); delete herd.watch[id];
+    if(!rid) calvUI.status = 'Tag ' + w.tag + ' already has a calving record this season.'; else calvUI.expanded.add(rid);
+    return calvChanged();
+  }
+  if(act === 'tally'){ const k = v, dlt = parseInt(btn.dataset.d, 10); calvUI.tally[k] = Math.max(0, calvUI.tally[k] + dlt); return renderCalving(); }
+  if(act === 'tallybay'){ calvUI.tallyBay = calvUI.tallyBay === v ? null : v; return renderCalving(); }
+  if(act === 'tallyreset'){ calvUI.tally = { H:0, B:0, HF:0, D:0 }; return renderCalving(); }
+  if(act === 'tallysave'){ const t = calvUI.tally; herd.tallies['t' + herdEventId()] = { text:(calvUI.tallyBay ? calvUI.tallyBay + ' — ' : '') + 'H:' + t.H + ' · B:' + t.B + ' · HF:' + t.HF + ' · ☠:' + t.D + ' · Total:' + (t.H + t.B + t.HF + t.D) }; calvUI.tally = { H:0, B:0, HF:0, D:0 }; calvUI.tallyBay = null; return calvChanged(); }
+  if(act === 'tallydel'){ delete herd.tallies[id]; return calvChanged(); }
+  if(act === 'baytoggle'){ if(calvUI.collapsedBays.has(v)) calvUI.collapsedBays.delete(v); else calvUI.collapsedBays.add(v); return renderCalving(); }
+  if(act === 'expand'){ if(calvUI.expanded.has(id)) calvUI.expanded.delete(id); else calvUI.expanded.add(id); return renderCalving(); }
+  if(act === 'histedit'){ calvUI.histEdit = calvUI.histEdit === id ? null : id; return renderCalving(); }
+  if(act === 'sex'){ return calvSet(id, tw ? { tsex:v, ttype:null, tktag:null } : { sex:v, type:null, ktag:null }); }
+  if(act === 'type'){ return calvSet(id, tw ? { ttype:v, tktag:null } : { type:v, ktag:null }); }
+  if(act === 'dead'){ const r = herd.calv[id]; return calvSet(id, tw ? { tdead:!r.tdead } : { dead:!r.dead }); }
+  if(act === 'twins'){ const r = herd.calv[id]; return calvSet(id, r.twins ? { twins:false, tsex:null, ttype:null, tktag:null, tdead:false } : { twins:true }); }
+  if(act === 'gold'){ return calvSet(id, { gold:!herd.calv[id].gold }); }
+  if(act === 'calvdel'){ if(!arm(btn.dataset.key)) return; delete herd.calv[id]; calvUI.histEdit = null; return calvChanged(); }
+  if(act === 'tofresh'){ if(!arm(btn.dataset.key)) return; return calvMoveToFresh(id); }
+  if(act === 'clearall'){ if(!arm('clearall')) return; calvActive().forEach(r => { herd.calv[r.id] = Object.assign({}, herd.calv[r.id], { arch:true }); }); return calvChanged(); }
+  if(act === 'directbay'){ calvUI.directBay = v; return renderCalving(); }
+  if(act === 'directadd'){
+    const tag = (document.getElementById('calv_directtag').value || '').trim(), date = document.getElementById('calv_directdate').value || today;
+    if(!tag) return; const rid = calvAddRecord(tag, date, calvUI.directBay);
+    Object.keys(herd.watch).forEach(k => { if(herd.watch[k].tag === tag) delete herd.watch[k]; });
+    if(!rid) calvUI.status = 'Tag ' + tag + ' already has a calving record this season.'; else calvUI.expanded.add(rid);
+    document.getElementById('calv_directtag').value = ''; return calvChanged();
+  }
+  if(act === 'copycalved') return calvCopyCalved();
+  if(act === 'txadd'){
+    const tag = (document.getElementById('calv_txtag').value || '').trim(), reason = (document.getElementById('calv_txreason').value || '').trim(), date = document.getElementById('calv_txdate').value;
+    if(!tag || !reason || !date) return calvFlash('Tag, treatment and withhold date are all needed.');
+    herd.tx['x' + herdEventId()] = { tag, loc:document.getElementById('calv_txloc').value, treatment:reason, date }; return calvChanged();
+  }
+  if(act === 'txdel'){ if(!arm(btn.dataset.key)) return; delete herd.tx[id]; return calvChanged(); }
+  if(act === 'd1calving'){
+    try{ calvFlash('Reading Dairy Assistant…'); const d = await window._daFetchFull(); const n = calvImport(d); calvUI.status = 'Imported ' + n + ' records.'; calvChanged(); }
+    catch(e){ calvFlash('Import failed: ' + (e.message || e) + ' — sign in to Dairy Assistant first (Today → Herds & flags), or paste its export.'); }
+    return;
+  }
+  if(act === 'pasteimport'){
+    try{ const n = calvImport(herdParseExport(document.getElementById('calv_paste').value)); calvUI.status = 'Imported ' + n + ' records.'; calvChanged(); }catch(e){ calvFlash('Import failed: ' + e.message); }
+    return;
+  }
+});
+document.getElementById('calvRoot').addEventListener('change', e => {
+  const t = e.target;
+  if(t.classList.contains('calf-kt')){ const tw = t.dataset.tw === '1'; calvSet(t.dataset.id, tw ? { tktag:t.value ? Number(t.value) : null } : { ktag:t.value ? Number(t.value) : null }); }
+  else if(t.classList.contains('calv-date')){ if(t.value) calvSet(t.dataset.id, { date:t.value }); }
+  else if(t.classList.contains('calv-bay')){ calvSet(t.dataset.id, { bay:t.value }); }
+  else if(t.classList.contains('calv-bay-n')){ herd.bays[t.dataset.bay] = Math.max(0, parseInt(t.value, 10) || 0); calvChanged(); }
+  else if(t.id === 'calv_directdate'){ calvUI.directDate = t.value; }
+  else if(t.id === 'calv_heifer'){ herd.heifer = t.value; calvChanged(); }
+});
+function updateCalvTab(){
+  const btn = document.getElementById('tabCalvBtn'); if(!btn) return;
+  btn.style.display = herd.calving ? '' : 'none';
+  document.querySelector('.tabbar').classList.toggle('many', !!herd.calving);
+  if(!herd.calving && document.getElementById('calvView').classList.contains('active')) switchTab('today');
+}
+
+// colostrum / new-mom groups (shown in the Herd tab)
+function herdColAlert(tag, since, today){
+  const rec = calvLatestFor(tag);
+  const dotDate = rec && rec.date ? rec.date : since;
+  const heifer = rec && rec.bay && rec.bay === herd.heifer;
+  const dots = Math.min(4, Math.max(0, daysBetweenKeys(dotDate, today)) + (heifer ? 1 : 0));
+  const dotStr = '●'.repeat(dots) + '○'.repeat(Math.max(0, 4 - dots));
+  const dEntered = Math.max(0, daysBetweenKeys(since, today));
+  if(dots >= 4) return '<span style="font-size:11px; background:#e3f0e3; color:var(--green); border-radius:3px; padding:1px 5px;">Ready ' + dotStr + '</span>';
+  if(dEntered >= 7) return '<span style="font-size:11px; background:#f6dcd6; color:var(--rust); border-radius:3px; padding:1px 5px;">⚠ ' + dEntered + 'd ' + dotStr + '</span>';
+  if(dEntered >= 5) return '<span style="font-size:11px; background:#f3e8cf; color:var(--amber); border-radius:3px; padding:1px 5px;">' + dEntered + 'd ' + dotStr + '</span>';
+  return '<span style="font-size:11px; color:var(--ink-soft);">' + (dEntered ? dEntered + 'd ' : '') + dotStr + '</span>';
+}
+function herdCalvingGroupCard(g, st, today){
+  let tags = Object.keys(st).filter(t => st[t].g === g.id);
+  const armBtn = (key, act, tag, label, attrs) => '<button class="hmini" style="font-size:11px; padding:3px 7px;' + (herdUI.confirm === key ? ' background:var(--amber); color:#fff; border-color:var(--amber);' : '') + '" data-act="' + act + '" data-tag="' + escapeHtml(tag) + '" data-key="' + key + '" ' + (attrs || '') + '>' + (herdUI.confirm === key ? label + '?' : label) + '</button>';
+  let h = '';
+  if(g.id === 'newMoms'){
+    tags = tags.sort(herdTagSort);
+    h += tags.length ? tags.map(t => { const rec = calvLatestFor(t); return '<div class="hrow"><b style="font-family:\'IBM Plex Mono\',monospace; min-width:46px;">' + escapeHtml(t) + (rec && rec.gold ? ' 🥛' : '') + '</b><span style="flex:1; font-size:11px; color:var(--ink-soft);">' + formatDateNice(st[t].since) + ' · ' + herdDaysLabel(st[t], today) + '</span><input type="date" class="hcoldate" data-tag="' + escapeHtml(t) + '" value="' + today + '" style="width:112px; font-size:11px; padding:2px;">' + armBtn('mc_' + t, 'momcol', t, '→ Col') + armBtn('md_' + t, 'momdel', t, '✕') + '</div>'; }).join('') : '<span class="herd-note">No new moms yet</span>';
+    if(tags.length) h += '<div class="herd-btnrow">' + '<button data-act="allcol" data-key="allcol">' + (herdUI.confirm === 'allcol' ? 'Tap again: all to colostrum' : '→ All to Colostrum') + '</button></div>';
+  } else {
+    tags = tags.sort((a, b) => { const d = daysBetweenKeys(st[b].since, today) - daysBetweenKeys(st[a].since, today); return d !== 0 ? d : herdTagSort(a, b); });
+    h += herdSectionHead('Sorted by days in mob · ⚠ amber 5d · red 7d+', tags.length, false);
+    h += tags.length ? tags.map(t => '<div class="hrow" style="flex-wrap:wrap;"><b style="font-family:\'IBM Plex Mono\',monospace; min-width:46px;">' + escapeHtml(t) + '</b><span style="font-size:11px; color:var(--ink-soft);">' + formatDateNice(st[t].since) + '</span><span style="flex:1;">' + herdColAlert(t, st[t].since, today) + '</span>' + ['milking:Herd', 'oad:OAD', 'peno:Peno'].map(x => { const p = x.split(':'); return armBtn('ce_' + p[0] + '_' + t, 'colexit', t, p[1], 'data-dest="' + p[0] + '"'); }).join('') + armBtn('cd_' + t, 'momdel', t, '✕') + '</div>').join('') : '<span class="herd-note">Colostrum mob is empty</span>';
+  }
+  h += herdGrazeRow(g.id, tags.length) + herdAddForm(g.id);
+  return herdCard(g.id, escapeHtml(g.label), tags.length ? '— ' + tags.length + ' cows' : '', h, herdCopyBtn(g.id));
+}
+function herdMineralCard(st){
+  const cnt = herdCountsAt(todayKeyReal()) || {};
+  const val = (k, d) => calvUI.mc[k] !== undefined ? calvUI.mc[k] : (d || 0);
+  const mom = val('mom', cnt.newMoms), col = val('col', cnt.colostrum), milk = val('milk', cnt.milkTotal), oad = val('oad', cnt.oad);
+  const fm = g => g < 1000 ? g + 'g' : (g / 1000).toFixed(g % 1000 === 0 ? 0 : 1) + 'kg';
+  const inp = (k, l, v) => '<div class="field"><label>' + l + '</label><input type="number" class="hmc" data-k="' + k + '" value="' + v + '" inputmode="numeric"></div>';
+  let h = '<div class="field-row">' + (herd.calving ? inp('mom', 'New moms', mom) + inp('col', 'Colostrum', col) : '') + '</div><div class="field-row">' + inp('milk', 'Milking herd', milk) + inp('oad', 'OAD', oad) + '</div>';
+  const lines = [];
+  if(herd.calving && mom > 0) lines.push('New moms (' + mom + ') — on bale: MgO ' + fm(mom * 100) + ' · Lime ' + fm(mom * 200));
+  if(herd.calving && col > 0) lines.push('Colostrum (' + col + '): morning MgO ' + fm(col * 100) + ' · Lime ' + fm(col * 200) + ' · afternoon Lime ' + fm(col * 200));
+  if(milk > 0) lines.push('Milking herd (' + milk + ') — fresh break: Lime ' + fm(milk * 100));
+  if(oad > 0) lines.push('OAD (' + oad + ') — fresh break: Lime ' + fm(oad * 100));
+  h += '<div style="font-family:\'IBM Plex Mono\',monospace; font-size:12px; line-height:1.7;">' + (lines.length ? lines.map(escapeHtml).join('<br>') : 'Enter cow numbers above') + '</div><div class="herd-btnrow"><button data-act="mccopy">Copy</button></div>';
+  herdUI.mcLines = lines;
+  return herdCard('minerals', 'Mineral calculator', '', h);
+}
 
 // ---------- TABS ----------
 const tabTodayBtn = document.getElementById('tabTodayBtn'), tabKlineBtn = document.getElementById('tabKlineBtn'), tabHistoryBtn = document.getElementById('tabHistoryBtn');
@@ -1414,20 +1856,23 @@ const todayView = document.getElementById('todayView'), klineView = document.get
 const saveBar = document.getElementById('saveBar');
 const walkView = document.getElementById('walkView'), settingsView = document.getElementById('settingsView');
 const herdView = document.getElementById('herdView'), tabHerdBtn = document.getElementById('tabHerdBtn');
+const calvView = document.getElementById('calvView'), tabCalvBtn = document.getElementById('tabCalvBtn');
 const tabWalkBtn = document.getElementById('tabWalkBtn'), tabSettingsBtn = document.getElementById('tabSettingsBtn');
 tabTodayBtn.addEventListener('click', () => switchTab('today'));
 tabKlineBtn.addEventListener('click', () => switchTab('kline'));
 tabWalkBtn.addEventListener('click', () => switchTab('walk'));
 tabHerdBtn.addEventListener('click', () => switchTab('herd'));
+tabCalvBtn.addEventListener('click', () => switchTab('calving'));
 tabHistoryBtn.addEventListener('click', () => switchTab('history'));
 tabSettingsBtn.addEventListener('click', () => switchTab('settings'));
 function switchTab(tab){
-  [todayView, klineView, walkView, herdView, historyView, settingsView].forEach(v => v.classList.remove('active'));
-  [tabTodayBtn, tabKlineBtn, tabWalkBtn, tabHerdBtn, tabHistoryBtn, tabSettingsBtn].forEach(b => b.classList.remove('active'));
+  [todayView, klineView, walkView, herdView, calvView, historyView, settingsView].forEach(v => v.classList.remove('active'));
+  [tabTodayBtn, tabKlineBtn, tabWalkBtn, tabHerdBtn, tabCalvBtn, tabHistoryBtn, tabSettingsBtn].forEach(b => b.classList.remove('active'));
   saveBar.style.display = tab === 'today' ? 'flex' : 'none';
   if(tab === 'today'){ todayView.classList.add('active'); tabTodayBtn.classList.add('active'); }
   else if(tab === 'kline'){ klineView.classList.add('active'); tabKlineBtn.classList.add('active'); renderKline(); }
   else if(tab === 'walk'){ walkView.classList.add('active'); tabWalkBtn.classList.add('active'); renderWalk(); }
+  else if(tab === 'calving'){ calvView.classList.add('active'); tabCalvBtn.classList.add('active'); renderCalving(); }
   else if(tab === 'herd'){ herdView.classList.add('active'); tabHerdBtn.classList.add('active'); renderHerd(); }
   else if(tab === 'settings'){ settingsView.classList.add('active'); tabSettingsBtn.classList.add('active'); renderSettings(); }
   else { historyView.classList.add('active'); tabHistoryBtn.classList.add('active'); renderHistory(); renderMuFeed(); }
@@ -2466,6 +2911,7 @@ function renderHeatmap(){
   }
 }
 function renderHistory(filter){
+  try{ renderLameHistory(); }catch(e){}
   if(typeof renderLookupResults === 'function' && typeof lookupSelected !== 'undefined') renderLookupResults();
   renderHeatmap();
   const list = document.getElementById('entryList'); list.innerHTML = '';
@@ -3513,7 +3959,7 @@ document.getElementById('importBtn').addEventListener('click', () => {
 });
 // register anything already on this device (first run: oldest possible edit time) before any new edits
 if(recomputeHerdEntries()) saveEntries(entries);
-applyHerdToForm(); renderHerd();
+applyHerdToForm(); renderHerd(); updateCalvTab(); renderCalving();
 detectLocalChanges();
 setSyncStatus();
 </script>
