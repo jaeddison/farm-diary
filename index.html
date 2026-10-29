@@ -118,6 +118,7 @@
   .export-output{ width:100%; min-height:120px; font-family:'IBM Plex Mono',monospace; font-size:11px; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; margin-top:10px; }
   .copy-btn{ width:100%; padding:11px; background:var(--blue); color:#fff; border:none; border-radius:8px; font-weight:600; margin-top:8px; cursor:pointer; }
   .tabbar button{ padding:12px 2px; font-size:13px; }
+  .paddock-btn.partial{ border-color:#C98A1B; box-shadow:inset 0 0 0 1px #C98A1B; color:#8a5d0c; }
   .paddock-btn.excluded{ background:var(--rust); border-color:var(--rust); color:#fff; }
   .walk-row{ display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); }
   .walk-row .wp{ font-family:'Roboto Slab',serif; font-weight:700; font-size:16px; min-width:46px; }
@@ -509,6 +510,28 @@
         <div id="exclList"></div>
       </div>
     </div>
+    <div class="card" data-card="breaks">
+      <div class="card-head"><span class="dot g"></span><h2>Break sizes</h2><span class="chevron">▾</span></div>
+      <div class="card-body">
+        <div style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Planned area (ha) for each herd's AM and PM break. Pick the date a change takes effect from; days before it keep whatever applied then (or nothing). On the Today page each break shows how much is left and fills the next paddock with the remainder.</div>
+        <div class="field" style="margin-bottom:10px;"><label>Effective from</label><input type="date" id="breakDate"></div>
+        <div id="breakGrid"></div>
+        <div id="breakList" style="margin-top:8px;"></div>
+      </div>
+    </div>
+    <div class="card" data-card="padsizes">
+      <div class="card-head"><span class="dot a"></span><h2>Paddock sizes</h2><span class="chevron">▾</span></div>
+      <div class="card-body">
+        <div style="font-size:12px; color:var(--ink-soft); margin-bottom:10px;">Sizes come from your latest Hawkeye walk. Override one here if it's wrong or missing (e.g. 44b). The Today page uses them to track how much of each paddock is left and stops you giving out more than it has.</div>
+        <div class="field-row">
+          <div class="field"><label>Paddock</label><select id="psizeSel" style="width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:15px;"></select></div>
+          <div class="field"><label>Area (ha)</label><input type="number" id="psizeHa" step="0.01" inputmode="decimal"></div>
+        </div>
+        <button class="save-btn" id="psizeSave" style="width:100%;">Save override</button>
+        <div id="psizeList" style="margin-top:8px;"></div>
+        <div id="psizeAll" style="font-size:11px; color:var(--ink-soft); font-family:'IBM Plex Mono',monospace; margin-top:8px; line-height:1.7;"></div>
+      </div>
+    </div>
     <div class="card" data-card="pasturetargets">
       <div class="card-head"><span class="dot a"></span><h2>Cover targets</h2><span class="chevron">▾</span></div>
       <div class="card-body">
@@ -628,6 +651,13 @@ const KNOWN_AREAS = { '44b': 0.4 }; // not measured by Hawkeye; used only if no 
 function loadJsonKey(key, dflt){ try{ const r = localStorage.getItem(key); return r ? JSON.parse(r) : dflt; }catch(e){ return dflt; } }
 let walks = loadJsonKey(WALKS_KEY, {});
 let exclusions = loadJsonKey(EXCL_KEY, []);
+const PSIZES_KEY = 'farmDiaryPaddockSizes';
+let paddockSizes = loadJsonKey(PSIZES_KEY, {}); // manual overrides { paddockKey: ha }; otherwise the latest Hawkeye walk's area is used
+function savePaddockSizes(){ localStorage.setItem(PSIZES_KEY, JSON.stringify(paddockSizes)); queueCloudPush(); }
+let entriesStamp = 0, allocIdxStamp = -1, allocIdx = null;
+const BREAKS_KEY = 'farmDiaryBreakTargets';
+let breakTargets = loadJsonKey(BREAKS_KEY, []); // dated: [{mob:'herd1', session:'am'|'pm', from:'YYYY-MM-DD', ha}] — latest 'from' on or before a date applies
+function saveBreaks(){ localStorage.setItem(BREAKS_KEY, JSON.stringify(breakTargets)); queueCloudPush(); }
 let pastureSettings = Object.assign({ pre:2850, post:1500 }, loadJsonKey(PASTURE_SET_KEY, {}));
 
 const PADDOCKS = [1,2,3,4,5,6,7,14,15,16,17,18,19,20,21,22,23,24,25,'25a',26,'26a',27,'27a','27b','28a','28b',29,30,31,32,33,35,36,37,38,39,40,41,42,43,'44a','44b',45,46,47,48,49,50,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67];
@@ -640,7 +670,7 @@ const STRIP_CALVING_MOBS = [ {id:'newMoms', label:'New Moms', optionalZero:true,
 const ALL_STRIP_MOBS = STRIP_MAIN_MOBS.concat(STRIP_CALVING_MOBS);
 
 function loadEntries(){ try{ const raw = localStorage.getItem(STORAGE_KEY); return raw ? JSON.parse(raw) : {}; }catch(e){ return {}; } }
-function saveEntries(entries){ localStorage.setItem(STORAGE_KEY, JSON.stringify(entries)); queueCloudPush(); }
+function saveEntries(entries){ entriesStamp++; localStorage.setItem(STORAGE_KEY, JSON.stringify(entries)); queueCloudPush(); }
 function loadKline(){
   try{ const raw = localStorage.getItem(KLINE_KEY); return raw ? JSON.parse(raw) : { pod1:{history:{}}, pod3:{history:{}} }; }
   catch(e){ return { pod1:{history:{}}, pod3:{history:{}} }; }
@@ -722,6 +752,8 @@ function localRecords(){
   Object.keys(walks).forEach(d => { r['walks/' + d + '/v'] = walks[d]; });
   exclusions.forEach(x => { r['excl/' + exclId(x) + '/v'] = x; });
   ['pod1', 'pod3'].forEach(p => { const h = (kline[p] && kline[p].history) || {}; Object.keys(h).forEach(d => { r['kline/' + p + '_' + d + '/v'] = h[d]; }); });
+  Object.keys(paddockSizes).forEach(k => { r['meta/sizes/' + k] = paddockSizes[k]; });
+  breakTargets.forEach(b => { r['meta/breaks/' + b.mob + '_' + b.session + '_' + b.from] = b.ha; });
   const rs = localStorage.getItem(ROUND_START_KEY); if(rs) r['meta/roundStart/v'] = rs;
   Object.keys(pastureSettings).forEach(f => {
     const key = 'meta/pasture/' + f;
@@ -777,6 +809,13 @@ function setLocalRecord(col, id, field, value){
       roundStartDate = value || loadRoundStart();
       const el = document.getElementById('roundStartDate'); if(el) el.value = roundStartDate;
     } else if(id === 'pasture'){ if(value === null) delete pastureSettings[field]; else pastureSettings[field] = value; }
+    else if(id === 'sizes'){ if(value === null) delete paddockSizes[field]; else paddockSizes[field] = value; allocIdxStamp = -1; }
+    else if(id === 'breaks'){
+      const m = field.match(/^(herd\d)_(am|pm)_(\d{4}-\d{2}-\d{2})$/); if(!m) return;
+      const ix = breakTargets.findIndex(b => b.mob === m[1] && b.session === m[2] && b.from === m[3]);
+      if(value === null){ if(ix >= 0) breakTargets.splice(ix, 1); }
+      else if(ix >= 0) breakTargets[ix].ha = value; else breakTargets.push({ mob:m[1], session:m[2], from:m[3], ha:value });
+    }
   }
 }
 // bring one cloud document's fields in, wherever the cloud's edit is at least as new as ours
@@ -801,6 +840,8 @@ function persistAfterRemote(){
     saveEntries(entries); saveKline(kline);
     localStorage.setItem(WALKS_KEY, JSON.stringify(walks));
     localStorage.setItem(EXCL_KEY, JSON.stringify(exclusions));
+    localStorage.setItem(BREAKS_KEY, JSON.stringify(breakTargets));
+    localStorage.setItem(PSIZES_KEY, JSON.stringify(paddockSizes));
     const pastureCustom = Object.keys(pastureSettings).some(f => pastureSettings[f] !== PASTURE_DEFAULTS[f]);
     if(pastureCustom || localStorage.getItem(PASTURE_SET_KEY)) localStorage.setItem(PASTURE_SET_KEY, JSON.stringify(pastureSettings));
   } finally { applyingRemote = false; }
@@ -916,7 +957,7 @@ function replaceFromCloud(){
   if(!confirm('Replace everything on this device with the cloud copy?\n\nAnything not yet uploaded from this device will be lost (a safety copy is kept on this device).')) return;
   try{ localStorage.setItem('farmDiaryBeforeReplace', JSON.stringify({ entries, kline, walks, exclusions, pastureSettings, at:Date.now() })); }catch(e){}
   stopSync();
-  entries = {}; walks = {}; exclusions = []; kline = { pod1:{ history:{} }, pod3:{ history:{} } };
+  entries = {}; walks = {}; exclusions = []; breakTargets = []; paddockSizes = {}; kline = { pod1:{ history:{} }, pod3:{ history:{} } };
   pastureSettings = Object.assign({}, PASTURE_DEFAULTS);
   localStorage.removeItem(ROUND_START_KEY); localStorage.removeItem(PASTURE_SET_KEY);
   syncMeta = { t:{}, h:{}, dirty:{}, migrated:true, legacy:true, last:0 };
@@ -957,8 +998,10 @@ document.documentElement.style.setProperty('--tabbar-h', document.querySelector(
 let entries = loadEntries();
 let kline = loadKline();
 let selectedWindDir = null, selectedWindStr = null;
-let mobSlotPaddock = {}, mobSlotHa = {};
-MAIN_MOBS.forEach(m => { mobSlotPaddock[m.id] = [null]; mobSlotHa[m.id] = [null]; });
+let mobSlotPaddock = {}, mobSlotHa = {}, mobSlotSession = {};
+let finishedToday = new Set(); // paddocks marked fully grazed today without changing any areas
+function blankSlots(mobId){ mobSlotPaddock[mobId] = [null, null]; mobSlotHa[mobId] = [null, null]; mobSlotSession[mobId] = ['am', 'pm']; }
+MAIN_MOBS.forEach(m => blankSlots(m.id));
 let stripState = {}; ALL_STRIP_MOBS.forEach(m => stripState[m.id] = { paddock:null, plannedArea:null, count:null, pendingActual:null });
 let modalCurrentKey = null;
 let pod1Action = null, pod3Action = null, pod1Selected = null, pod3Selected = null;
@@ -1032,7 +1075,127 @@ document.getElementById('skipCollectionField').addEventListener('change', (e) =>
   updateSolidsPerCow();
 });
 
-// ---------- MAIN MOB ROWS: two paddock+area slots each ----------
+// ---------- MAIN MOB ROWS: AM / PM breaks, each made of paddock + area slots ----------
+// ---- paddock memory: how much of each paddock has been allocated since it was last fully grazed ----
+const CYCLE_GAP_DAYS = 4; // a paddock with nothing logged for more than this many days starts a fresh pass
+function paddockSize(key){ return paddockSizes[key] || paddockArea(key) || 0; }
+function getAllocIndex(){
+  if(allocIdx && allocIdxStamp === entriesStamp) return allocIdx;
+  const idx = {};
+  const add = (p, d, ha) => { if(p === null || p === undefined || p === '' || !(ha > 0)) return; const k = pk(p); (idx[k] = idx[k] || []); const a = idx[k]; if(a.length && a[a.length-1][0] === d) a[a.length-1][1] += ha; else a.push([d, ha]); };
+  Object.keys(entries).sort().forEach(d => {
+    const e = entries[d];
+    MAIN_MOBS.forEach(m => {
+      const ps = normalizeSlotArray(e.mobPaddocks && e.mobPaddocks[m.id]), hs = normalizeSlotArray(e.mobAreas && e.mobAreas[m.id]);
+      ps.forEach((p, i) => add(p, d, hs[i] || 0));
+    });
+    ALL_STRIP_MOBS.forEach(m => { const sg = e.stripGrazers && e.stripGrazers[m.id]; if(sg) add(sg.paddock, d, (sg.plannedArea || 0) / 10000); });
+    (Array.isArray(e.finished) ? e.finished : []).forEach(k => { const key = pk(k); (idx[key] = idx[key] || []); const a = idx[key]; if(a.length && a[a.length-1][0] === d) a[a.length-1][2] = true; else a.push([d, 0, true]); });
+  });
+  allocIdx = idx; allocIdxStamp = entriesStamp;
+  return idx;
+}
+function padTol(size){ return Math.max(0.05, size * 0.02); }
+function usedBefore(key, dateKey){
+  const size = paddockSize(key); let used = 0, last = null, completedOn = null;
+  (getAllocIndex()[key] || []).forEach(([d, ha, fin]) => {
+    if(d >= dateKey) return;
+    if(last && daysBetweenKeys(last, d) > CYCLE_GAP_DAYS){ used = 0; completedOn = null; }
+    used += ha; last = d;
+    if(fin || (size && used >= size - padTol(size))){ used = 0; completedOn = d; } // reaching full size, or marked finished by hand
+  });
+  if(last && daysBetweenKeys(last, dateKey) > CYCLE_GAP_DAYS) used = 0; // untouched for too long: a fresh pass
+  return { size, used, last, completedOn };
+}
+// area of this paddock already given to other slots on the day being edited (any herd, strip mobs too)
+function liveAllocElse(key, exMob, exIdx){
+  let ha = 0;
+  MAIN_MOBS.forEach(m => mobSlotPaddock[m.id].forEach((p, i) => { if(m.id === exMob && i === exIdx) return; if(p !== null && p !== undefined && pk(p) === key) ha += mobSlotHa[m.id][i] || 0; }));
+  ALL_STRIP_MOBS.forEach(m => { const st = stripState[m.id]; if(st && st.paddock !== null && st.paddock !== undefined && pk(st.paddock) === key) ha += (st.plannedArea || 0) / 10000; });
+  return ha;
+}
+function padStatus(mobId, s){
+  const p = mobSlotPaddock[mobId][s]; if(p === null || p === undefined) return null;
+  const key = pk(p), b = usedBefore(key, selectedDateKey);
+  if(!b.size) return { key, size:0 };
+  const others = liveAllocElse(key, mobId, s), thisHa = mobSlotHa[mobId][s] || 0;
+  return { key, size:b.size, finished: finishedToday.has(key), before:b.used, others, thisHa, maxHere: b.size - b.used - others, leftAfter: b.size - b.used - others - thisHa, completedOn:b.completedOn };
+}
+function slotSession(mobId, s){ return (mobSlotSession[mobId] && mobSlotSession[mobId][s]) || null; }
+function breakTargetOn(mobId, session, dateKey){
+  let best = null;
+  breakTargets.forEach(b => { if(b.mob === mobId && b.session === session && b.from <= dateKey && (!best || b.from > best.from)) best = b; });
+  return best && best.ha > 0 ? best : null;
+}
+// herd size: today's count if entered, otherwise the most recent earlier day that has one
+function cowsForMob(mobId){
+  const v = parseFloat(document.getElementById(mobId).value) || 0;
+  if(v > 0) return { n:v, src:null };
+  let cur = selectedDateKey;
+  for(let i = 0; i < 14; i++){ cur = keyOffsetFrom(cur, -1); const e = entries[cur]; if(e && e[mobId] > 0) return { n:e[mobId], src:cur }; }
+  return null;
+}
+function sessionSlots(mobId, sess){ const out = []; mobSlotPaddock[mobId].forEach((_, s) => { if(slotSession(mobId, s) === sess) out.push(s); }); return out; }
+function updateBreakInfo(mobId){
+  const c = cowsForMob(mobId);
+  [ 'am', 'pm', null ].forEach(sess => {
+    const idxs = sessionSlots(mobId, sess);
+    const used = idxs.reduce((a, s) => a + (mobSlotHa[mobId][s] || 0), 0);
+    const el = document.querySelector(`[data-break-info="${mobId}-${sess}"]`);
+    if(el){
+      const t = sess ? breakTargetOn(mobId, sess, selectedDateKey) : null;
+      let txt = '', over = false;
+      if(t){
+        const left = t.ha - used;
+        txt = `target ${t.ha} ha · used ${used.toFixed(2)} · ` + (left > 0.004 ? `${left.toFixed(2)} left` : left < -0.004 ? `over by ${(-left).toFixed(2)}` : 'full');
+        over = left < -0.004;
+      } else if(sess) txt = 'no break size set (Settings)';
+      if(c && used > 0) txt += (txt ? ' · ' : '') + `${Math.round(c.n)} cows${c.src ? ' (from ' + fmtShort(c.src) + ')' : ''} = ${Math.round(c.n / used)}/ha`;
+      el.textContent = txt; el.style.color = over ? 'var(--rust)' : 'var(--ink-soft)';
+    }
+    const withHa = idxs.filter(s => mobSlotHa[mobId][s] > 0);
+    idxs.forEach(s => {
+      const pEl = document.querySelector(`[data-slot-pad="${mobId}-${s}"]`);
+      if(pEl){
+        const st = padStatus(mobId, s);
+        if(!st || !st.size){ pEl.innerHTML = st ? '<span style="color:var(--ink-soft);">Paddock size unknown (import a walk or set it in Settings)</span>' : ''; }
+        else {
+          const tol = padTol(st.size), p = mobSlotPaddock[mobId][s];
+          let t = `P${p} · ${st.size.toFixed(1)} ha`;
+          if(st.before > 0.04) t += ` · ${st.before.toFixed(1)} grazed earlier`;
+          if(st.others > 0.04) t += ` · ${st.others.toFixed(1)} in other breaks today`;
+          let tail = '', col = 'var(--ink-soft)', btnHtml = '';
+          if(st.finished){
+            tail = ' · ✓ marked fully grazed (areas unchanged)'; col = 'var(--green)';
+            btnHtml = ` <button data-unfinish-pad="${mobId}-${s}" style="border:1px solid var(--line); background:#fff; color:var(--ink-soft); border-radius:6px; font-size:11px; padding:2px 8px; cursor:pointer;">Undo</button>`;
+          } else if(st.thisHa > 0){
+            if(st.leftAfter > tol){
+              tail = ` · ${st.leftAfter.toFixed(1)} ha left after`;
+              if(st.leftAfter <= st.size * 0.10) btnHtml = ` <button data-finish-pad="${mobId}-${s}" style="border:1px solid var(--green); background:#fff; color:var(--green); border-radius:6px; font-size:11px; padding:2px 8px; cursor:pointer;">Mark finished</button>`;
+            }
+            else if(st.leftAfter >= -tol){ tail = ' · ✓ fully grazed with this break'; col = 'var(--green)'; }
+            else { tail = ` · over by ${(-st.leftAfter).toFixed(1)} ha — only ${Math.max(0, st.maxHere).toFixed(1)} left`; col = 'var(--rust)'; btnHtml = ` <button data-fix-pad="${mobId}-${s}" style="border:1px solid var(--rust); background:#fff; color:var(--rust); border-radius:6px; font-size:11px; padding:2px 8px; cursor:pointer;">Set to ${Math.max(0, st.maxHere).toFixed(1)}</button>`; }
+          } else if(st.completedOn && st.before === 0 && daysBetweenKeys(st.completedOn, selectedDateKey) <= 10) tail = ` · fully grazed on ${fmtShort(st.completedOn)}`;
+          pEl.style.color = col; pEl.innerHTML = escapeHtml(t + tail) + btnHtml;
+          const fin = pEl.querySelector('[data-finish-pad]');
+          if(fin) fin.addEventListener('click', () => { finishedToday.add(st.key); updateAllBreakInfo(); formTouched = true; scheduleAutosave(); });
+          const unfin = pEl.querySelector('[data-unfinish-pad]');
+          if(unfin) unfin.addEventListener('click', () => { finishedToday.delete(st.key); updateAllBreakInfo(); formTouched = true; scheduleAutosave(); });
+          const fix = pEl.querySelector('[data-fix-pad]');
+          if(fix) fix.addEventListener('click', () => {
+            const v = Math.round(Math.max(0, st.maxHere) * 100) / 100;
+            mobSlotHa[mobId][s] = v || null;
+            const hi = document.querySelector(`[data-mslot-ha="${mobId}-${s}"]`); if(hi) hi.value = v || '';
+            updateMobChips(mobId); updateGrazingTotals(); formTouched = true; scheduleAutosave();
+          });
+        }
+      }
+      const cEl = document.querySelector(`[data-slot-cows="${mobId}-${s}"]`); if(!cEl) return;
+      cEl.textContent = (c && used > 0 && withHa.length >= 2 && mobSlotHa[mobId][s] > 0) ? `≈ ${Math.round(c.n * mobSlotHa[mobId][s] / used)} cows if grazed evenly` : '';
+    });
+  });
+}
+function updateAllBreakInfo(){ MAIN_MOBS.forEach(m => updateBreakInfo(m.id)); }
 function buildMainMobRow(mob){
   const row = document.createElement('div'); row.className = 'mob-row'; row.dataset.mob = mob.id;
   row.innerHTML = `
@@ -1042,67 +1205,99 @@ function buildMainMobRow(mob){
     </div>
     <div class="mob-row-body">
       <div data-slots-container="${mob.id}"></div>
-      <button class="btn-outline" data-add-slot="${mob.id}" style="width:100%; padding:10px; border:1px dashed var(--line); border-radius:8px; background:#fff; color:var(--green); font-weight:600; font-size:13px; cursor:pointer; margin-top:6px;">+ Add paddock</button>
     </div>`;
   row.querySelector('.mob-row-head').addEventListener('click', () => row.classList.toggle('open'));
-  row.querySelector(`[data-add-slot="${mob.id}"]`).addEventListener('click', () => {
-    if(mobSlotPaddock[mob.id].length >= 6) return;
-    mobSlotPaddock[mob.id].push(null);
-    mobSlotHa[mob.id].push(null);
-    renderMobSlots(mob.id);
-    updateGrazingTotals();
-  });
   renderMobSlots(mob.id);
   return row;
 }
 function renderMobSlots(mobId){
   const container = document.querySelector(`[data-slots-container="${mobId}"]`);
   if(!container) return;
-  container.innerHTML = '';
-  mobSlotPaddock[mobId].forEach((val, s) => {
-    const slot = document.createElement('div');
-    slot.className = 'mob-slot';
-    if(s > 0) slot.style.cssText = 'margin-top:14px;padding-top:14px;border-top:1px dashed var(--line);';
-    slot.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-        <label style="font-size:11px; color:var(--ink-soft); margin:0;">Paddock ${s+1}</label>
-        ${s > 0 ? `<button data-remove-slot="${mobId}-${s}" style="border:none; background:none; color:var(--rust); font-size:12px; font-weight:600; cursor:pointer; padding:2px 6px;">Remove</button>` : ''}
-      </div>
-      <div class="paddock-grid" data-mslot-grid="${mobId}-${s}" style="margin-bottom:8px;"></div>
-      <div class="field"><label>Area (ha)</label><input type="number" data-mslot-ha="${mobId}-${s}" step="0.1"></div>`;
-    container.appendChild(slot);
+  container.innerHTML = '<div style="font-size:11px; color:var(--ink-soft); margin-bottom:8px;">Amber outline = partly grazed, still has area left.</div>';
+  const groups = [];
+  if(mobSlotPaddock[mobId].some((_, s) => !slotSession(mobId, s))) groups.push({ key:null, label:'Earlier entry (no AM/PM)' });
+  groups.push({ key:'am', label:'AM' }, { key:'pm', label:'PM' });
+  groups.forEach((g, gi) => {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = gi > 0 ? 'margin-top:14px; padding-top:12px; border-top:2px solid var(--line);' : '';
+    wrap.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:8px;"><strong style="font-size:13px;">${g.label}</strong><span data-break-info="${mobId}-${g.key}" style="font-size:11px; color:var(--ink-soft); font-family:'IBM Plex Mono',monospace; text-align:right;"></span></div><div data-group-slots></div>`;
+    container.appendChild(wrap);
+    const slotsEl = wrap.querySelector('[data-group-slots]');
+    const idxs = sessionSlots(mobId, g.key);
+    idxs.forEach((s, n) => {
+      const val = mobSlotPaddock[mobId][s];
+      const slot = document.createElement('div');
+      slot.className = 'mob-slot';
+      if(n > 0) slot.style.cssText = 'margin-top:14px;padding-top:14px;border-top:1px dashed var(--line);';
+      slot.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <label style="font-size:11px; color:var(--ink-soft); margin:0;">Paddock ${n+1}</label>
+          ${n > 0 ? `<button data-remove-slot="${mobId}-${s}" style="border:none; background:none; color:var(--rust); font-size:12px; font-weight:600; cursor:pointer; padding:2px 6px;">Remove</button>` : ''}
+        </div>
+        <div class="paddock-grid" data-mslot-grid="${mobId}-${s}" style="margin-bottom:8px;"></div>
+        <div class="field"><label>Area (ha)</label><input type="number" data-mslot-ha="${mobId}-${s}" step="0.1"></div>
+        <div data-slot-cows="${mobId}-${s}" style="font-size:12px; color:var(--green); font-weight:600; margin-top:-4px;"></div>
+        <div data-slot-pad="${mobId}-${s}" style="font-size:12px; margin-top:4px;"></div>`;
+      slotsEl.appendChild(slot);
 
-    const grid = slot.querySelector(`[data-mslot-grid="${mobId}-${s}"]`);
-    PADDOCKS.forEach(p => {
-      const btn = document.createElement('div'); btn.className = 'paddock-btn'; btn.textContent = p;
-      if(val !== null && val !== undefined && String(p) === String(val)) btn.classList.add('active-g');
-      btn.addEventListener('click', () => {
-        Array.from(grid.children).forEach(b => b.classList.remove('active-g'));
-        btn.classList.add('active-g');
-        mobSlotPaddock[mobId][s] = p;
+      const grid = slot.querySelector(`[data-mslot-grid="${mobId}-${s}"]`);
+      const haInput = slot.querySelector(`[data-mslot-ha="${mobId}-${s}"]`);
+      PADDOCKS.forEach(p => {
+        const btn = document.createElement('div'); btn.className = 'paddock-btn'; btn.textContent = p;
+        if(val !== null && val !== undefined && String(p) === String(val)) btn.classList.add('active-g');
+        else {
+          const u = usedBefore(pk(p), selectedDateKey);
+          if(u.size && u.used > padTol(u.size) && u.last && daysBetweenKeys(u.last, selectedDateKey) <= CYCLE_GAP_DAYS){ btn.classList.add('partial'); btn.title = u.used.toFixed(1) + ' of ' + u.size.toFixed(1) + ' ha grazed'; }
+        }
+        btn.addEventListener('click', () => {
+          Array.from(grid.children).forEach(b => b.classList.remove('active-g'));
+          btn.classList.add('active-g');
+          mobSlotPaddock[mobId][s] = p;
+          // plan from the break size: an empty area fills with whatever is left of this break
+          if(g.key && !mobSlotHa[mobId][s]){
+            const t = breakTargetOn(mobId, g.key, selectedDateKey);
+            if(t){
+              const others = sessionSlots(mobId, g.key).filter(x => x !== s).reduce((a, x) => a + (mobSlotHa[mobId][x] || 0), 0);
+              let rem = t.ha - others;
+              const ps = padStatus(mobId, s);
+              if(ps && ps.size) rem = Math.min(rem, ps.maxHere); // never hand out more than the paddock has left
+              rem = Math.round(rem * 100) / 100;
+              if(rem > 0){ mobSlotHa[mobId][s] = rem; haInput.value = rem; }
+            }
+          }
+          updateMobChips(mobId); updateGrazingTotals();
+          formTouched = true; scheduleAutosave();
+        });
+        grid.appendChild(btn);
+      });
+      haInput.value = mobSlotHa[mobId][s] ?? '';
+      haInput.addEventListener('input', (e) => {
+        mobSlotHa[mobId][s] = parseFloat(e.target.value) || null;
         updateMobChips(mobId); updateGrazingTotals();
         formTouched = true; scheduleAutosave();
       });
-      grid.appendChild(btn);
+      if(n > 0){
+        slot.querySelector(`[data-remove-slot="${mobId}-${s}"]`).addEventListener('click', () => {
+          mobSlotPaddock[mobId].splice(s, 1); mobSlotHa[mobId].splice(s, 1); mobSlotSession[mobId].splice(s, 1);
+          renderMobSlots(mobId); updateGrazingTotals();
+          formTouched = true; scheduleAutosave();
+        });
+      }
     });
-    const haInput = slot.querySelector(`[data-mslot-ha="${mobId}-${s}"]`);
-    haInput.value = mobSlotHa[mobId][s] ?? '';
-    haInput.addEventListener('input', (e) => {
-      mobSlotHa[mobId][s] = parseFloat(e.target.value) || null;
-      updateMobChips(mobId); updateGrazingTotals();
-      formTouched = true; scheduleAutosave();
-    });
-    if(s > 0){
-      slot.querySelector(`[data-remove-slot="${mobId}-${s}"]`).addEventListener('click', () => {
-        mobSlotPaddock[mobId].splice(s, 1);
-        mobSlotHa[mobId].splice(s, 1);
-        renderMobSlots(mobId);
-        updateGrazingTotals();
-        formTouched = true; scheduleAutosave();
+    if(g.key && mobSlotPaddock[mobId].length < 8){
+      const add = document.createElement('button');
+      add.textContent = '+ Add paddock (' + g.label + ')';
+      add.style.cssText = 'width:100%; padding:10px; border:1px dashed var(--line); border-radius:8px; background:#fff; color:var(--green); font-weight:600; font-size:13px; cursor:pointer; margin-top:8px;';
+      add.addEventListener('click', () => {
+        mobSlotPaddock[mobId].push(null); mobSlotHa[mobId].push(null); mobSlotSession[mobId].push(g.key);
+        renderMobSlots(mobId); updateGrazingTotals();
+        formTouched = true;
       });
+      wrap.appendChild(add);
     }
   });
   updateMobChips(mobId);
+  updateBreakInfo(mobId);
 }
 function updateMobChips(mobId){
   const chipsEl = document.querySelector(`[data-chips="${mobId}"]`);
@@ -1445,6 +1640,7 @@ function updateGrazingTotals(){
   const ex = excludedOnDate(selectedDateKey);
   const note = document.getElementById('inRoundNote');
   if(note) note.textContent = `Round area ${roundHa.toFixed(1)} ha` + (ex.length ? ` (${ex.map(x => x.toUpperCase()).join(', ')} out)` : '');
+  updateAllBreakInfo();
   if(document.getElementById('feedSection').classList.contains('open')) updateFeedOffered();
 }
 
@@ -1457,7 +1653,8 @@ function resetFormBlank(){
   document.getElementById('milkSolidsTotal').disabled = false;
   document.querySelectorAll('#windDirGroup .toggle-btn, #windStrGroup .toggle-btn').forEach(b => b.classList.remove('active-b'));
   selectedWindDir = null; selectedWindStr = null;
-  MAIN_MOBS.forEach(m => { mobSlotPaddock[m.id] = [null]; mobSlotHa[m.id] = [null]; setMainSlotGridState(m.id); });
+  finishedToday = new Set();
+  MAIN_MOBS.forEach(m => { blankSlots(m.id); setMainSlotGridState(m.id); });
   ALL_STRIP_MOBS.forEach(m => {
     stripState[m.id] = { paddock:null, plannedArea:null, count:null, pendingActual:null };
     setStripUIFromState(m.id);
@@ -1472,6 +1669,7 @@ function loadDateIntoForm(){
   document.getElementById('entryDateLabel').textContent = formatDateNice(selectedDateKey);
   const e = entries[selectedDateKey];
   if(e && e.supplements) loadSuppFromEntry(e.supplements);
+  if(e && Array.isArray(e.finished)) finishedToday = new Set(e.finished.map(k => pk(k)));
   if(e){
     document.getElementById('milkLitres').value = e.milkLitres ?? '';
     document.getElementById('milkSolidsTotal').value = e.milkSolidsTotal ?? '';
@@ -1499,6 +1697,13 @@ function loadDateIntoForm(){
     MAIN_MOBS.forEach(m => {
       mobSlotPaddock[m.id] = normalizeSlotArray(e.mobPaddocks && e.mobPaddocks[m.id]);
       mobSlotHa[m.id] = normalizeSlotArray(e.mobAreas && e.mobAreas[m.id]);
+      const ss = e.mobSessions && e.mobSessions[m.id];
+      const anyContent = mobSlotPaddock[m.id].some(v => v !== null && v !== undefined) || mobSlotHa[m.id].some(v => v);
+      if(Array.isArray(ss) && ss.length && anyContent){
+        while(mobSlotHa[m.id].length < mobSlotPaddock[m.id].length) mobSlotHa[m.id].push(null);
+        mobSlotSession[m.id] = mobSlotPaddock[m.id].map((_, i) => ss[i] || null);
+      } else if(anyContent) mobSlotSession[m.id] = mobSlotPaddock[m.id].map(() => null); // saved before AM/PM existed — left exactly as it was
+      else blankSlots(m.id);
       setMainSlotGridState(m.id);
     });
     ALL_STRIP_MOBS.forEach(m => {
@@ -1530,8 +1735,11 @@ loadDateIntoForm();
 function persistCurrentEntry(){
   const key = selectedDateKey;
   if(!formTouched && !entries[key]) return; // nothing actually entered for this date yet — don't lock in prepopulated guesses
-  const mobPaddocksSnapshot = {}; const mobAreasSnapshot = {};
-  MAIN_MOBS.forEach(m => { mobPaddocksSnapshot[m.id] = mobSlotPaddock[m.id].slice(); mobAreasSnapshot[m.id] = mobSlotHa[m.id].slice(); });
+  const mobPaddocksSnapshot = {}; const mobAreasSnapshot = {}; const mobSessionsSnapshot = {};
+  MAIN_MOBS.forEach(m => {
+    mobPaddocksSnapshot[m.id] = mobSlotPaddock[m.id].slice(); mobAreasSnapshot[m.id] = mobSlotHa[m.id].slice();
+    if(mobSlotPaddock[m.id].some(v => v !== null && v !== undefined) || mobSlotHa[m.id].some(v => v)) mobSessionsSnapshot[m.id] = mobSlotPaddock[m.id].map((_, i) => mobSlotSession[m.id][i] || null);
+  });
 
   const stripSnapshot = {};
   ALL_STRIP_MOBS.forEach(m => {
@@ -1573,6 +1781,8 @@ function persistCurrentEntry(){
     srpTarget: parseFloat(document.getElementById('srpTarget').value) || null,
     mobAreas: mobAreasSnapshot,
     mobPaddocks: mobPaddocksSnapshot,
+    mobSessions: Object.keys(mobSessionsSnapshot).length ? mobSessionsSnapshot : undefined,
+    finished: (() => { const used = new Set(); MAIN_MOBS.forEach(m => mobSlotPaddock[m.id].forEach(p => { if(p !== null && p !== undefined) used.add(pk(p)); })); ALL_STRIP_MOBS.forEach(m => { const st = stripState[m.id]; if(st && st.paddock !== null && st.paddock !== undefined) used.add(pk(st.paddock)); }); const f = Array.from(finishedToday).filter(k => used.has(k)); return f.length ? f : undefined; })(),
     stripGrazers: stripSnapshot,
     notes: document.getElementById('notesField').value || ''
   });
@@ -2165,7 +2375,45 @@ document.getElementById('walkImportBtn').addEventListener('click', () => {
 });
 
 // --- Settings tab ---
+function renderBreakSettings(){
+  const bd = document.getElementById('breakDate'); if(!bd.value) bd.value = todayKeyReal();
+  const d = bd.value, grid = document.getElementById('breakGrid');
+  grid.innerHTML = MAIN_MOBS.map(m => `<div class="field-row"><div class="field"><label>${m.label} AM</label><input type="number" step="0.1" inputmode="decimal" data-break="${m.id}-am"></div><div class="field"><label>${m.label} PM</label><input type="number" step="0.1" inputmode="decimal" data-break="${m.id}-pm"></div></div>`).join('');
+  grid.querySelectorAll('[data-break]').forEach(inp => {
+    const [mob, sess] = inp.dataset.break.split('-');
+    const eff = breakTargetOn(mob, sess, d);
+    inp.value = eff ? eff.ha : '';
+    inp.addEventListener('change', () => {
+      const v = inp.value === '' ? null : parseFloat(inp.value);
+      const exact = breakTargets.findIndex(b => b.mob === mob && b.session === sess && b.from === d);
+      if(v === null || isNaN(v)){ if(exact >= 0) breakTargets.splice(exact, 1); }
+      else if(exact >= 0) breakTargets[exact].ha = v;
+      else if(!eff || eff.ha !== v) breakTargets.push({ mob, session:sess, from:d, ha:v });
+      saveBreaks(); renderBreakSettings(); updateAllBreakInfo();
+    });
+  });
+  document.getElementById('breakList').innerHTML = breakTargets.slice().sort((a, b) => b.from.localeCompare(a.from) || a.mob.localeCompare(b.mob)).map(b => {
+    const i = breakTargets.indexOf(b), lab = (MAIN_MOBS.find(m => m.id === b.mob) || { label:b.mob }).label;
+    return `<div class="excl-item"><span>${escapeHtml(lab)} ${b.session.toUpperCase()} · ${b.ha} ha from ${fmtShort(b.from)}</span><button data-break-del="${i}" title="Remove">✕</button></div>`;
+  }).join('');
+  document.querySelectorAll('[data-break-del]').forEach(btn => btn.addEventListener('click', () => { breakTargets.splice(parseInt(btn.dataset.breakDel, 10), 1); saveBreaks(); renderBreakSettings(); updateAllBreakInfo(); }));
+}
+document.getElementById('breakDate').addEventListener('change', renderBreakSettings);
+function renderPaddockSizes(){
+  const sel = document.getElementById('psizeSel');
+  if(!sel.options.length) PADDOCKS.slice().sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true})).forEach(p => { const o = document.createElement('option'); o.value = pk(p); o.textContent = p; sel.appendChild(o); });
+  document.getElementById('psizeList').innerHTML = Object.keys(paddockSizes).sort().map(k => `<div class="excl-item"><span>${escapeHtml(k.toUpperCase())} · ${paddockSizes[k]} ha (override)</span><button data-psize-del="${escapeHtml(k)}" title="Remove">✕</button></div>`).join('');
+  document.querySelectorAll('[data-psize-del]').forEach(b => b.addEventListener('click', () => { delete paddockSizes[b.dataset.psizeDel]; savePaddockSizes(); allocIdxStamp = -1; renderPaddockSizes(); updateAllBreakInfo(); }));
+  document.getElementById('psizeAll').textContent = PADDOCKS.slice().sort((a,b)=>String(a).localeCompare(String(b),undefined,{numeric:true})).map(p => `${p}: ${paddockSize(pk(p)) ? paddockSize(pk(p)).toFixed(2) : '?'}`).join('  ·  ');
+}
+document.getElementById('psizeSave').addEventListener('click', () => {
+  const k = document.getElementById('psizeSel').value, v = parseFloat(document.getElementById('psizeHa').value);
+  if(!k || !(v > 0)) return;
+  paddockSizes[k] = v; savePaddockSizes(); allocIdxStamp = -1;
+  document.getElementById('psizeHa').value = ''; renderPaddockSizes(); updateAllBreakInfo();
+});
 function renderSettings(){
+  renderBreakSettings(); renderPaddockSizes();
   const dEl = document.getElementById('exclDate');
   if(!dEl.value) dEl.value = todayKeyReal();
   const d = dEl.value;
