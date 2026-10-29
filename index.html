@@ -175,6 +175,7 @@
       <button class="date-arrow" id="entryNextBtn">›</button>
       <button class="today-jump" id="todayJumpBtn">Today</button>
     </div>
+    <div id="ewCatchup" style="display:none; background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-bottom:12px; font-size:13px;"></div>
 
     <div class="card" data-card="production">
       <div class="card-head"><span class="dot g"></span><h2>Production</h2><span class="chevron">▾</span></div>
@@ -553,6 +554,9 @@
         <div class="field"><label>Station MAC address</label><input type="text" id="ewMac" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="AA:BB:CC:DD:EE:FF"></div>
         <div style="display:flex; gap:8px; margin-top:4px;"><button class="save-btn" id="ewSaveBtn" style="flex:1;">Save</button><button class="copy-btn" id="ewTestBtn" style="flex:1; margin-top:0;">Test with today</button></div>
         <div class="status-msg" id="ewStatus" style="text-align:left;"></div>
+        <div class="herd-note" style="margin-top:14px;">Fill missing weather for a range of past days (only days with no temperatures are filled; nothing you've entered is changed; up to 90 days at a time).</div>
+        <div class="field-row"><div class="field"><label>From</label><input type="date" id="ewRangeFrom"></div><div class="field"><label>To</label><input type="date" id="ewRangeTo"></div></div>
+        <button class="copy-btn" id="ewRangeBtn" style="width:100%; margin-top:0;">Fill missing days</button>
         <details id="ewRawWrap" style="display:none; margin-top:8px;"><summary style="font-size:12px; color:var(--ink-soft);">Show what Ecowitt sent back</summary><textarea id="ewRaw" readonly style="min-height:120px; font-size:11px;"></textarea></details>
       </div>
     </div>
@@ -1896,7 +1900,7 @@ function switchTab(tab){
   [todayView, klineView, walkView, herdView, calvView, historyView, settingsView].forEach(v => v.classList.remove('active'));
   [tabTodayBtn, tabKlineBtn, tabWalkBtn, tabHerdBtn, tabCalvBtn, tabHistoryBtn, tabSettingsBtn].forEach(b => b.classList.remove('active'));
   saveBar.style.display = tab === 'today' ? 'flex' : 'none';
-  if(tab === 'today'){ todayView.classList.add('active'); tabTodayBtn.classList.add('active'); }
+  if(tab === 'today'){ todayView.classList.add('active'); tabTodayBtn.classList.add('active'); if(typeof ewCatchupCheck === 'function') ewCatchupCheck(); }
   else if(tab === 'kline'){ klineView.classList.add('active'); tabKlineBtn.classList.add('active'); renderKline(); }
   else if(tab === 'walk'){ walkView.classList.add('active'); tabWalkBtn.classList.add('active'); renderWalk(); }
   else if(tab === 'calving'){ calvView.classList.add('active'); tabCalvBtn.classList.add('active'); renderCalving(); }
@@ -2764,7 +2768,7 @@ document.getElementById('ewFetchBtn').addEventListener('click', async () => {
   document.getElementById('ewSaveBtn').addEventListener('click', () => {
     const o = { app:document.getElementById('ewApp').value.trim(), api:document.getElementById('ewApi').value.trim(), mac:document.getElementById('ewMac').value.trim() };
     try{ localStorage.setItem(EW_KEY, JSON.stringify(o)); document.getElementById('ewStatus').textContent = 'Saved on this phone.'; }catch(e){ document.getElementById('ewStatus').textContent = 'Could not save here (private browsing?).'; }
-    ewUpdateButton();
+    ewUpdateButton(); ewDismissed = false; ewCatchupCheck();
   });
   document.getElementById('ewTestBtn').addEventListener('click', async () => {
     const st = document.getElementById('ewStatus'); st.textContent = 'Testing…';
@@ -2773,6 +2777,61 @@ document.getElementById('ewFetchBtn').addEventListener('click', async () => {
   });
   ewUpdateButton();
 })();
+
+// ----- catch-up: fill past days that have no weather -----
+function ewMissingDays(fromKey, toKey){
+  const out = []; let k = fromKey, guard = 0;
+  while(k <= toKey && guard++ < 400){ if(k !== selectedDateKey){ const e = entries[k]; if(!e || (e.tempHigh == null && e.tempLow == null)) out.push(k); } k = keyOffsetFrom(k, 1); }
+  return out;
+}
+let ewBusy = false, ewDismissed = false;
+const EW_NODATA_KEY = 'farmDiaryEcowittNoData';
+function ewNoData(){ const a = loadJsonKey(EW_NODATA_KEY, []); return new Set(Array.isArray(a) ? a : []); }
+function ewMarkNoData(k){ const n = ewNoData(); n.add(k); try{ localStorage.setItem(EW_NODATA_KEY, JSON.stringify(Array.from(n).slice(-120))); }catch(e){} }
+async function ewFillDays(keys, say){
+  let done = 0, skipped = 0;
+  for(let i = 0; i < keys.length; i++){
+    const k = keys[i]; say('Filling ' + (i + 1) + ' of ' + keys.length + '…');
+    try{
+      const v = await ewFetchDay(k), e = entries[k] || { date:k }, add = {};
+      ['tempHigh', 'tempLow', 'rainfall', 'windDir', 'windStr'].forEach(f => { if(v[f] !== undefined && (e[f] === undefined || e[f] === null || e[f] === '')) add[f] = v[f]; });
+      if(Object.keys(add).length){ entries[k] = Object.assign({}, e, add, { date:k }); done++; } else { skipped++; ewMarkNoData(k); }
+    }catch(err){
+      if(/^No readings/.test(err.message)){ skipped++; ewMarkNoData(k); }
+      else { if(done){ saveEntries(entries); } throw new Error(err.message + (done ? ' (' + done + ' days were filled before this.)' : '')); }
+    }
+    if(i < keys.length - 1) await new Promise(r => setTimeout(r, 1100));
+  }
+  if(done){ allowMassClear = false; saveEntries(entries); try{ renderHistory(document.getElementById('searchBox').value); }catch(e){} }
+  return { done, skipped };
+}
+function ewCatchupCheck(){
+  const box = document.getElementById('ewCatchup'); if(!box) return;
+  const c = ewCfg();
+  if(!(c.app && c.api && c.mac) || ewDismissed || ewBusy){ if(!ewBusy) box.style.display = 'none'; return; }
+  const today = todayKeyReal(), nd = ewNoData(), miss = ewMissingDays(keyOffsetFrom(today, -14), keyOffsetFrom(today, -1)).filter(k => !nd.has(k));
+  if(!miss.length){ box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  box.innerHTML = '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px;"><span><b>' + miss.length + '</b> recent day' + (miss.length > 1 ? 's have' : ' has') + ' no weather.</span><span style="display:flex; gap:6px;"><button class="hmini" id="ewCatchGo">Fill from station</button><button class="hmini" id="ewCatchNo">Not now</button></span></div><div id="ewCatchMsg" style="margin-top:6px; color:var(--ink-soft);"></div>';
+  document.getElementById('ewCatchNo').onclick = () => { ewDismissed = true; box.style.display = 'none'; };
+  document.getElementById('ewCatchGo').onclick = async () => {
+    if(ewBusy) return; ewBusy = true; const msg = document.getElementById('ewCatchMsg');
+    try{ const r = await ewFillDays(miss, t => { msg.textContent = t; }); ewBusy = false; box.innerHTML = '<span>Filled weather for <b>' + r.done + '</b> day' + (r.done === 1 ? '' : 's') + (r.skipped ? ' (' + r.skipped + ' had no station data)' : '') + '.</span>'; setTimeout(() => { box.style.display = 'none'; }, 4000); }
+    catch(e){ ewBusy = false; msg.textContent = e.message; }
+  };
+}
+document.getElementById('ewRangeBtn').addEventListener('click', async () => {
+  const st = document.getElementById('ewStatus'), f = document.getElementById('ewRangeFrom').value, t = document.getElementById('ewRangeTo').value;
+  if(!f || !t || f > t){ st.textContent = 'Pick a From and To date (From before To).'; return; }
+  const keys = ewMissingDays(f, t > keyOffsetFrom(todayKeyReal(), -1) ? keyOffsetFrom(todayKeyReal(), -1) : t);
+  if(!keys.length){ st.textContent = 'No days without weather in that range.'; return; }
+  if(keys.length > 90){ st.textContent = keys.length + ' days need filling — choose a range with at most 90 at a time.'; return; }
+  if(ewBusy) return; ewBusy = true;
+  try{ const r = await ewFillDays(keys, x => { st.textContent = x; }); st.textContent = 'Filled ' + r.done + ' day' + (r.done === 1 ? '' : 's') + (r.skipped ? ' (' + r.skipped + ' had no station data)' : '') + '.'; }
+  catch(e){ st.textContent = e.message; }
+  ewBusy = false;
+});
+ewCatchupCheck();
 
 // ---------- TRENDS ----------
 function trailingAvg(getter, uptoDateKeyExclusive, windowSize, minPoints){
