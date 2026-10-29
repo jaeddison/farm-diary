@@ -427,13 +427,18 @@
       </div>
     </div>
 
-    <div class="view-toggle">
-      <button id="rainToggleBtn" class="active">Rainfall</button>
-      <button id="prodToggleBtn">Production</button>
+    <div class="card collapsed" data-card="mufeed" style="margin-top:12px;">
+      <div class="card-head"><span class="dot a"></span><h2>Milk urea vs feed</h2><span class="chevron">▾</span></div>
+      <div class="card-body">
+        <div class="export-row">
+          <div class="field"><label>From</label><input type="date" id="muFrom"></div>
+          <div class="field"><label>To</label><input type="date" id="muTo"></div>
+        </div>
+        <div class="field"><label>Average feed over the last</label>
+          <select id="muAvg" style="width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:15px;"><option value="1">1 day (pickup day)</option><option value="2" selected>2 days</option><option value="3">3 days</option></select></div>
+        <div id="muOut" style="margin-top:8px;"></div>
+      </div>
     </div>
-    <div class="heatmap" id="heatmap"></div>
-    <div class="heatmap-legend" id="heatmapLegend"></div>
-    <div id="entryList"></div>
 
     <div class="card" data-card="milkimport" style="margin-top:12px;">
       <div class="card-head"><span class="dot g"></span><h2>Import milk pickups</h2><span class="chevron">▾</span></div>
@@ -451,20 +456,7 @@
       </div>
     </div>
 
-    <div class="card" data-card="mufeed" style="margin-top:12px;">
-      <div class="card-head"><span class="dot a"></span><h2>Milk urea vs feed</h2><span class="chevron">▾</span></div>
-      <div class="card-body">
-        <div class="export-row">
-          <div class="field"><label>From</label><input type="date" id="muFrom"></div>
-          <div class="field"><label>To</label><input type="date" id="muTo"></div>
-        </div>
-        <div class="field"><label>Average feed over the last</label>
-          <select id="muAvg" style="width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:15px;"><option value="1">1 day (pickup day)</option><option value="2" selected>2 days</option><option value="3">3 days</option></select></div>
-        <div id="muOut" style="margin-top:8px;"></div>
-      </div>
-    </div>
-
-    <div class="card" data-card="export" style="margin-top:20px;">
+    <div class="card collapsed" data-card="export" style="margin-top:12px;">
       <div class="card-head"><span class="dot b"></span><h2>Export data</h2><span class="chevron">▾</span></div>
       <div class="card-body">
         <div class="export-row">
@@ -491,6 +483,19 @@
         <textarea id="importInput" style="min-height:100px;" placeholder="Paste a FARM_DIARY_EXPORT code here to restore data — merges into whatever's already saved, doesn't erase other dates."></textarea>
         <button class="save-btn" id="importBtn" style="width:100%; margin-top:8px;">Import &amp; restore</button>
         <div class="status-msg" id="importStatus"></div>
+      </div>
+    </div>
+    <div class="card collapsed" data-card="dayhistory" style="margin-top:20px;">
+      <div class="card-head"><span class="dot g"></span><h2>Day-by-day history</h2><span class="chevron">▾</span></div>
+      <div class="card-body">
+    <div class="view-toggle">
+      <button id="rainToggleBtn" class="active">Rainfall</button>
+      <button id="prodToggleBtn">Production</button>
+    </div>
+    <div class="heatmap" id="heatmap"></div>
+    <div class="heatmap-legend" id="heatmapLegend"></div>
+    <div id="entryList"></div>
+
       </div>
     </div>
   </div>
@@ -1115,7 +1120,7 @@ const FOOT_LABELS = { LF:'Left front', RF:'Right front', LR:'Left rear', RR:'Rig
 function blankHerd(){ return { cutover:null, calving:false, base:{}, events:{}, splits:{}, lame:{}, flags:{}, graze:{}, calv:{}, watch:{}, tx:{}, bays:{}, tallies:{}, heifer:'Bay 6' }; }
 let herd = (function(){ const h = loadJsonKey(HERD_KEY, null); return h ? Object.assign(blankHerd(), h) : blankHerd(); })();
 let herdStamp = 0, herdEvCache = { stamp:-1, list:[] }, herdStateCache = {};
-const herdUI = { date:null, open:{ counts:true, milking:true }, status:'', confirm:null, inputs:{}, feet:[], search:'', sel:{} };
+const herdUI = { date:null, open:{ counts:true, milking:true, c_bays:true, c_tx:true, c_watch:true, c_tally:true, c_calved:true, c_hist:true }, status:'', confirm:null, inputs:{}, feet:[], search:'', sel:{} };
 function herdGroupLabel(g){ const x = HERD_GROUPS.find(y => y.id === g); return x ? x.label : (g === 'out' ? 'Out of herd' : g); }
 function herdSortedEvents(){
   if(herdEvCache.stamp !== herdStamp){
@@ -1545,7 +1550,7 @@ document.getElementById('herdCalvingToggle').addEventListener('change', e => { h
 // ---------- CALVING (behind Settings → Calving season) ----------
 const CALV_BAYS = ['Bay 1', 'Bay 2', 'Bay 3', 'Bay 4', 'Bay 5', 'Bay 6', 'Penicillin Paddock'];
 const CALV_TYPE_LABEL = { Keeper:'Keeper', Hereford:'HF', Bobby:'Bob' };
-const calvUI = { watchStatus:null, watchBay:null, directBay:null, directDate:null, tally:{ H:0, B:0, HF:0, D:0 }, tallyBay:null, expanded:new Set(), collapsedBays:new Set(), histEdit:null, confirm:null, status:'', mc:{} };
+const calvUI = { watchStatus:null, watchBay:null, directBay:null, directDate:null, tally:{ H:0, B:0, HF:0, D:0 }, tallyBay:null, sub:'bays', expanded:new Set(), collapsedBays:new Set(), histEdit:null, confirm:null, status:'', mc:{} };
 function bayShort(b){ return b === 'Penicillin Paddock' ? 'P' : (b ? String(b).replace('Bay ', '') : '?'); }
 function calvRecs(){ return Object.keys(herd.calv).map(id => Object.assign({ id }, herd.calv[id])); }
 function calvActive(){ return calvRecs().filter(r => !r.arch); }
@@ -1679,8 +1684,12 @@ function renderCalving(){
   const keep = {}; root.querySelectorAll('input[id^="calv_"], select[id^="calv_"]').forEach(el => { keep[el.id] = el.value; });
   let html = '';
   if(calvUI.status) html += '<div class="status-msg" style="text-align:left; margin:0 0 10px; color:var(--ink);">' + escapeHtml(calvUI.status) + '</div>';
-  html += calvBanner() + calvBaysCard() + calvWatchCard() + calvTallyCard() + calvCalvedCard() + calvHistoryCard() + calvTxCard();
-  html += herdCard('c_import', 'Bring in Dairy Assistant calving data', '', '<div class="herd-note">Copies the watch list, calved list, calving history, treatments, bay counts and heifer-bay setting. Safe to run again — records keep the same ids, so nothing doubles up.</div><div class="herd-btnrow"><button data-cact="d1calving">Import from Dairy Assistant</button></div><div class="herd-note">Or paste its export:</div><textarea id="calv_paste" style="width:100%; min-height:60px; border:1px solid var(--line); border-radius:8px; padding:8px; font-size:11px;"></textarea><div class="herd-btnrow"><button data-cact="pasteimport">Import pasted code</button></div>' + '<div class="field" style="margin-top:8px;"><label>Heifer bay (cows calving here start with 1 colostrum dot)</label><select id="calv_heifer">' + CALV_BAYS.slice(0, 6).map(b => '<option' + (herd.heifer === b ? ' selected' : '') + '>' + b + '</option>').join('') + '</select></div>');
+  const sub = calvUI.sub || 'bays';
+  html += '<div class="view-toggle">' + [['bays', 'Bays'], ['calving', 'Calving'], ['history', 'History']].map(x => '<button class="' + (sub === x[0] ? 'active' : '') + '" data-csub="' + x[0] + '">' + x[1] + '</button>').join('') + '</div>';
+  if(sub === 'bays') html += calvBaysCard() + calvTxCard();
+  else if(sub === 'calving') html += calvBanner() + calvWatchCard() + calvTallyCard() + calvCalvedCard();
+  else html += calvBanner() + calvHistoryCard();
+  if(sub === 'history') html += herdCard('c_import', 'Bring in Dairy Assistant calving data', '', '<div class="herd-note">Copies the watch list, calved list, calving history, treatments, bay counts and heifer-bay setting. Safe to run again — records keep the same ids, so nothing doubles up.</div><div class="herd-btnrow"><button data-cact="d1calving">Import from Dairy Assistant</button></div><div class="herd-note">Or paste its export:</div><textarea id="calv_paste" style="width:100%; min-height:60px; border:1px solid var(--line); border-radius:8px; padding:8px; font-size:11px;"></textarea><div class="herd-btnrow"><button data-cact="pasteimport">Import pasted code</button></div>' + '<div class="field" style="margin-top:8px;"><label>Heifer bay (cows calving here start with 1 colostrum dot)</label><select id="calv_heifer">' + CALV_BAYS.slice(0, 6).map(b => '<option' + (herd.heifer === b ? ' selected' : '') + '>' + b + '</option>').join('') + '</select></div>');
   root.innerHTML = html;
   Object.keys(keep).forEach(id => { const el = document.getElementById(id); if(el && keep[id] !== '' && el.tagName !== 'SELECT') el.value = keep[id]; });
 }
@@ -1724,6 +1733,10 @@ function calvImport(d){
   return n;
 }
 document.getElementById('calvRoot').addEventListener('click', async ev => {
+  const tg = ev.target.closest('[data-act="toggle"]');
+  if(tg && !ev.target.closest('[data-cact]')){ herdUI.open[tg.dataset.id] = !herdUI.open[tg.dataset.id]; tg.closest('.card').classList.toggle('collapsed', !herdUI.open[tg.dataset.id]); return; }
+  const subb = ev.target.closest('[data-csub]');
+  if(subb){ calvUI.sub = subb.dataset.csub; calvUI.confirm = null; return renderCalving(); }
   const btn = ev.target.closest('[data-cact]'); if(!btn) return;
   const act = btn.dataset.cact, id = btn.dataset.id, v = btn.dataset.v, tw = btn.dataset.tw === '1';
   const armed = calvUI.confirm; calvUI.confirm = null; calvUI.status = '';
@@ -2937,7 +2950,7 @@ function renderHistory(filter){
     list.appendChild(item);
   });
 }
-document.getElementById('searchBox').addEventListener('input', (e) => renderHistory(e.target.value));
+document.getElementById('searchBox').addEventListener('input', (e) => { if(e.target.value) document.querySelector('[data-card="dayhistory"]').classList.remove('collapsed'); renderHistory(e.target.value); });
 
 function openModal(key){
   modalCurrentKey = key;
