@@ -344,6 +344,8 @@
     <div class="card" data-card="weather">
       <div class="card-head"><span class="dot b"></span><h2>Weather</h2><span class="chevron">▾</span></div>
       <div class="card-body">
+        <button class="copy-btn" id="ewFetchBtn" style="margin:0 0 4px; width:100%; display:none;">Fetch from weather station</button>
+        <div class="status-msg" id="ewFetchStatus" style="text-align:left; margin:0 0 10px;"></div>
         <label style="font-size:12px; color:var(--ink-soft); display:block; margin-bottom:6px;">Wind direction</label>
         <div class="btn-group" id="windDirGroup" style="margin-bottom:12px;">
           <div class="toggle-btn" data-val="N">N</div><div class="toggle-btn" data-val="NE">NE</div>
@@ -542,6 +544,18 @@
   </div>
 
   <div class="view" id="settingsView">
+    <div class="card collapsed" data-card="ecowitt">
+      <div class="card-head"><span class="dot b"></span><h2>Weather station (Ecowitt)</h2><span class="chevron">▾</span></div>
+      <div class="card-body">
+        <div class="herd-note" style="margin-bottom:8px;">Kept on this phone only — not synced and not in the app code. Enter these once on each device. Create the keys in Ecowitt.net → profile → API; the MAC is the station's address from your device list.</div>
+        <div class="field"><label>Application key</label><input type="password" id="ewApp" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+        <div class="field"><label>API key</label><input type="password" id="ewApi" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+        <div class="field"><label>Station MAC address</label><input type="text" id="ewMac" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="AA:BB:CC:DD:EE:FF"></div>
+        <div style="display:flex; gap:8px; margin-top:4px;"><button class="save-btn" id="ewSaveBtn" style="flex:1;">Save</button><button class="copy-btn" id="ewTestBtn" style="flex:1; margin-top:0;">Test with today</button></div>
+        <div class="status-msg" id="ewStatus" style="text-align:left;"></div>
+        <details id="ewRawWrap" style="display:none; margin-top:8px;"><summary style="font-size:12px; color:var(--ink-soft);">Show what Ecowitt sent back</summary><textarea id="ewRaw" readonly style="min-height:120px; font-size:11px;"></textarea></details>
+      </div>
+    </div>
     <div class="card" data-card="calvingseason">
       <div class="card-head"><span class="dot a"></span><h2>Calving season</h2><span class="chevron">▾</span></div>
       <div class="card-body">
@@ -2678,6 +2692,87 @@ document.querySelectorAll('[data-strip-count]').forEach(el => el.addEventListene
 document.getElementById('skipCollectionField').addEventListener('change', touchAndPersist);
 document.querySelectorAll('#windDirGroup .toggle-btn, #windStrGroup .toggle-btn').forEach(btn => btn.addEventListener('click', touchAndPersist));
 document.querySelectorAll('[data-strip-grid] .paddock-btn').forEach(btn => btn.addEventListener('click', touchAndPersist));
+
+
+// ---------- ECOWITT WEATHER STATION ----------
+const EW_KEY = 'farmDiaryEcowitt';
+const EW_LIGHT_MAX = 20, EW_MEDIUM_MAX = 38; // km/h day-average wind: below 20 = Light, up to 38 = Medium, above = Strong
+const ewLast = {};
+function ewCfg(){ const c = loadJsonKey(EW_KEY, {}); return c && typeof c === 'object' ? c : {}; }
+function ewSeries(node){
+  if(!node) return [];
+  const l = node.list; let vals = [];
+  if(Array.isArray(l)) vals = l.map(x => (x && typeof x === 'object') ? x.value : x);
+  else if(l && typeof l === 'object') vals = Object.values(l);
+  else if(node.value !== undefined) vals = [node.value];
+  return vals.map(v => parseFloat(v)).filter(v => isFinite(v));
+}
+function ewShowRaw(txt){ const w = document.getElementById('ewRawWrap'); if(!w) return; w.style.display = 'block'; document.getElementById('ewRaw').value = String(txt).slice(0, 6000); }
+async function ewFetchDay(key){
+  const c = ewCfg();
+  if(!c.app || !c.api || !c.mac) throw new Error('Add the application key, API key and MAC under Settings → Weather station first.');
+  const p = n => String(n).padStart(2, '0'), now = new Date();
+  const end = key === todayKeyReal() ? key + ' ' + p(now.getHours()) + ':' + p(now.getMinutes()) + ':' + p(now.getSeconds()) : key + ' 23:59:59';
+  const q = new URLSearchParams({ application_key:c.app, api_key:c.api, mac:c.mac.trim(), start_date:key + ' 00:00:00', end_date:end, cycle_type:'30min',
+    call_back:'outdoor.temperature,wind.wind_speed,wind.wind_direction,rainfall.daily', temp_unitid:'1', wind_speed_unitid:'7', rainfall_unitid:'12' });
+  let r;
+  try{ r = await fetch('https://api.ecowitt.net/api/v3/device/history?' + q.toString()); }
+  catch(e){ throw new Error('Could not reach Ecowitt from the app (offline, or the browser blocked the request).'); }
+  let txt = await r.text(); ewShowRaw(txt);
+  let j; try{ j = JSON.parse(txt); }catch(e){ throw new Error('Ecowitt sent back something unreadable (HTTP ' + r.status + ').'); }
+  if(j.code !== undefined && Number(j.code) !== 0) throw new Error('Ecowitt said: ' + (j.msg || ('error ' + j.code)));
+  const d = j.data || {};
+  const temps = ewSeries(d.outdoor && d.outdoor.temperature);
+  const rain = ewSeries(d.rainfall && d.rainfall.daily);
+  const spd = ewSeries(d.wind && d.wind.wind_speed), dir = ewSeries(d.wind && d.wind.wind_direction);
+  if(!temps.length && !rain.length && !spd.length) throw new Error('No readings came back for that date.');
+  const out = {};
+  if(temps.length){ out.tempHigh = Math.round(Math.max.apply(null, temps) * 10) / 10; out.tempLow = Math.round(Math.min.apply(null, temps) * 10) / 10; }
+  if(rain.length) out.rainfall = Math.round(Math.max.apply(null, rain) * 10) / 10;
+  if(spd.length){ const avg = spd.reduce((a, b) => a + b, 0) / spd.length; out.windStr = avg < EW_LIGHT_MAX ? 'Light' : (avg <= EW_MEDIUM_MAX ? 'Medium' : 'Strong'); out.windAvg = Math.round(avg); }
+  if(dir.length){
+    let sx = 0, sy = 0; dir.forEach((dg, i) => { const w = (spd.length === dir.length ? Math.max(spd[i], 0.1) : 1), rad = dg * Math.PI / 180; sx += Math.sin(rad) * w; sy += Math.cos(rad) * w; });
+    const deg = (Math.atan2(sx, sy) * 180 / Math.PI + 360) % 360; out.windDir = ['N','NE','E','SE','S','SW','W','NW'][Math.round(deg / 45) % 8];
+  }
+  return out;
+}
+function ewApply(vals){
+  const key = selectedDateKey, prev = ewLast[key] || {}, kept = [], filled = [];
+  [['tempHigh','tempHigh','High'], ['tempLow','tempLow','Low'], ['rainfall','rainfall','Rain']].forEach(f => {
+    if(vals[f[0]] === undefined) return;
+    const el = document.getElementById(f[1]), cur = el.value;
+    if(cur === '' || (prev[f[0]] !== undefined && parseFloat(cur) === prev[f[0]])){ el.value = vals[f[0]]; el.dispatchEvent(new Event('input', { bubbles:true })); filled.push(f[2] + ' ' + vals[f[0]]); }
+    else if(parseFloat(cur) !== vals[f[0]]) kept.push(f[2] + ' (you have ' + cur + ', station says ' + vals[f[0]] + ')');
+  });
+  [['windDir', 'windDirGroup', selectedWindDir], ['windStr', 'windStrGroup', selectedWindStr]].forEach(f => {
+    if(!vals[f[0]]) return;
+    if(!f[2] || f[2] === prev[f[0]]){ const b = document.querySelector('#' + f[1] + ' .toggle-btn[data-val="' + vals[f[0]] + '"]'); if(b){ b.click(); filled.push(vals[f[0]]); } }
+    else if(f[2] !== vals[f[0]]) kept.push(f[0] === 'windDir' ? 'Wind direction (you have ' + f[2] + ', station says ' + vals[f[0]] + ')' : 'Wind strength (you have ' + f[2] + ', station says ' + vals[f[0]] + ')');
+  });
+  ewLast[key] = vals;
+  return (filled.length ? 'Filled: ' + filled.join(', ') + '.' : 'Nothing new to fill.') + (kept.length ? ' Kept yours: ' + kept.join('; ') + '.' : '');
+}
+function ewUpdateButton(){ const b = document.getElementById('ewFetchBtn'); if(!b) return; const c = ewCfg(); b.style.display = (c.app && c.api && c.mac) ? '' : 'none'; }
+document.getElementById('ewFetchBtn').addEventListener('click', async () => {
+  const st = document.getElementById('ewFetchStatus'), btn = document.getElementById('ewFetchBtn'); btn.disabled = true; st.textContent = 'Fetching…';
+  try{ const v = await ewFetchDay(selectedDateKey); st.textContent = ewApply(v) + (v.windAvg !== undefined ? ' (Average wind ' + v.windAvg + ' km/h.)' : ''); }
+  catch(e){ st.textContent = e.message; }
+  btn.disabled = false;
+});
+(function(){
+  const c = ewCfg(); document.getElementById('ewApp').value = c.app || ''; document.getElementById('ewApi').value = c.api || ''; document.getElementById('ewMac').value = c.mac || '';
+  document.getElementById('ewSaveBtn').addEventListener('click', () => {
+    const o = { app:document.getElementById('ewApp').value.trim(), api:document.getElementById('ewApi').value.trim(), mac:document.getElementById('ewMac').value.trim() };
+    try{ localStorage.setItem(EW_KEY, JSON.stringify(o)); document.getElementById('ewStatus').textContent = 'Saved on this phone.'; }catch(e){ document.getElementById('ewStatus').textContent = 'Could not save here (private browsing?).'; }
+    ewUpdateButton();
+  });
+  document.getElementById('ewTestBtn').addEventListener('click', async () => {
+    const st = document.getElementById('ewStatus'); st.textContent = 'Testing…';
+    try{ const v = await ewFetchDay(todayKeyReal()); st.textContent = 'Working. Today so far: high ' + (v.tempHigh ?? '–') + '°C, low ' + (v.tempLow ?? '–') + '°C, rain ' + (v.rainfall ?? '–') + ' mm, wind ' + (v.windDir || '–') + ' ' + (v.windAvg ?? '–') + ' km/h.'; }
+    catch(e){ st.textContent = e.message; }
+  });
+  ewUpdateButton();
+})();
 
 // ---------- TRENDS ----------
 function trailingAvg(getter, uptoDateKeyExclusive, windowSize, minPoints){
