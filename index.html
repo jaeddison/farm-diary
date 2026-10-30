@@ -105,8 +105,10 @@
   .delete-btn{ width:100%; padding:12px; background:none; border:1px solid var(--rust); color:var(--rust); border-radius:8px; font-family:'IBM Plex Sans',sans-serif; font-size:14px; font-weight:600; margin-top:8px; cursor:pointer; }
   .mob-row{ border:1px solid var(--line); border-radius:8px; margin-bottom:8px; overflow:hidden; }
   .mob-row-head{ display:flex; justify-content:space-between; align-items:center; padding:11px 12px; cursor:pointer; background:#fff; gap:8px; }
+  .mob-row-head.main{ flex-wrap:wrap; gap:2px 8px; }
   .mob-row-head .mob-name{ font-size:14px; font-weight:600; }
   .mob-row-head .mob-chips{ font-size:11px; color:var(--ink-soft); font-family:'IBM Plex Mono',monospace; text-align:right; }
+  .mob-row-head.main .mob-chips{ flex-basis:100%; text-align:left; }
   .mob-row-body{ display:none; padding:12px; background:#F5F3EC; border-top:1px solid var(--line); }
   .mob-row.open .mob-row-body{ display:block; } .mob-row.open .mob-row-head{ background:var(--green-soft); }
   .paddock-grid{ display:grid; grid-template-columns:repeat(6, 1fr); gap:5px; }
@@ -2070,12 +2072,14 @@ function updateBreakInfo(mobId){
     });
   });
 }
-function updateAllBreakInfo(){ MAIN_MOBS.forEach(m => updateBreakInfo(m.id)); }
+function updateAllBreakInfo(){ MAIN_MOBS.forEach(m => { updateBreakInfo(m.id); updateMobChips(m.id); }); }
+['herd1', 'herd2', 'herd3'].forEach(id => { const el = document.getElementById(id); if(el) el.addEventListener('input', () => { try{ updateAllBreakInfo(); }catch(e){} }); });
 function buildMainMobRow(mob){
   const row = document.createElement('div'); row.className = 'mob-row'; row.dataset.mob = mob.id;
   row.innerHTML = `
-    <div class="mob-row-head">
+    <div class="mob-row-head main">
       <span class="mob-name">${mob.label}</span>
+      <span data-mobtotal="${mob.id}" style="font-size:12px; font-weight:600; color:var(--green); font-family:'IBM Plex Mono',monospace;"></span>
       <span class="mob-chips" data-chips="${mob.id}">No paddocks</span>
     </div>
     <div class="mob-row-body">
@@ -2177,11 +2181,29 @@ function renderMobSlots(mobId){
   updateBreakInfo(mobId);
 }
 function updateMobChips(mobId){
-  const chipsEl = document.querySelector(`[data-chips="${mobId}"]`);
-  const pads = mobSlotPaddock[mobId], has = mobSlotHa[mobId];
-  const parts = [];
-  pads.forEach((p, s) => { if(p !== null && p !== undefined) parts.push('P' + p + (has[s] ? ' (' + has[s] + 'ha)' : '')); });
-  chipsEl.textContent = parts.length ? parts.join(', ') : 'No paddocks';
+  const chipsEl = document.querySelector(`[data-chips="${mobId}"]`); if(!chipsEl) return;
+  const pads = mobSlotPaddock[mobId], has = mobSlotHa[mobId], c = cowsForMob(mobId);
+  const any = pads.some(p => p !== null && p !== undefined);
+  const totEl = document.querySelector(`[data-mobtotal="${mobId}"]`);
+  const tot = pads.reduce((a, p, s) => a + ((p !== null && p !== undefined && has[s]) ? has[s] : 0), 0);
+  if(totEl) totEl.textContent = tot > 0 ? (Math.round(tot * 10) / 10) + ' ha' : '';
+  if(!any){ chipsEl.textContent = 'No paddocks'; return; }
+  const line = (label, idxs) => {
+    const filled = idxs.filter(s => pads[s] !== null && pads[s] !== undefined);
+    const used = filled.reduce((a, s) => a + (has[s] || 0), 0), withHa = filled.filter(s => has[s] > 0).length;
+    const parts = filled.map(s => {
+      let t = 'P' + pads[s] + (has[s] ? ' ' + has[s] + ' ha' : '');
+      if(c && c.n > 0){ const n = (withHa >= 2 && has[s] > 0 && used > 0) ? c.n * has[s] / used : (filled.length === 1 ? c.n : null); if(n !== null) t += ' · ' + Math.round(n) + ' cows'; }
+      return escapeHtml(t);
+    });
+    const rows = parts.length ? parts : ['–'];
+    return rows.map((t, i) => '<div style="display:flex; gap:6px; margin-top:' + (i === 0 ? '3' : '0') + 'px;"><b style="min-width:' + (label ? '22px' : '0') + ';">' + (i === 0 ? label : '') + '</b><span>' + t + '</span></div>').join('');
+  };
+  let html = '';
+  const early = pads.map((_, s) => s).filter(s => !slotSession(mobId, s));
+  if(early.some(s => pads[s] !== null && pads[s] !== undefined)) html += line('', early);
+  html += line('AM', sessionSlots(mobId, 'am')) + line('PM', sessionSlots(mobId, 'pm'));
+  chipsEl.innerHTML = html;
 }
 function setMainSlotGridState(mobId){
   renderMobSlots(mobId);
