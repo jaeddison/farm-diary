@@ -160,7 +160,7 @@
   <div class="tabbar">
     <button id="tabTodayBtn" class="active">Today</button>
     <button id="tabKlineBtn">K-line</button>
-    <button id="tabWalkBtn">Walk</button>
+    <button id="tabWalkBtn">Pasture</button>
     <button id="tabHerdBtn">Herd</button>
     <button id="tabCalvBtn" style="display:none;">Calving</button>
     <button id="tabHistoryBtn">History</button>
@@ -506,6 +506,13 @@
   </div>
 
   <div class="view" id="walkView">
+    <div class="card" data-card="grazeweek">
+      <div class="card-head"><span class="dot a"></span><h2>Last 7 days grazing</h2><span class="chevron">▾</span></div>
+      <div class="card-body">
+        <div id="grazeWeekRoot"></div>
+        <div style="font-size:11px; color:var(--ink-soft); margin-top:8px;">Paddock and area (ha) for each break, AM then PM, with cows. Strip mobs show paddock, area (m²) and cows. Swipe sideways for earlier days.</div>
+      </div>
+    </div>
     <div class="field" id="walkSelectWrap" style="margin-bottom:12px; display:none;"><label>Walk</label><select id="walkSelect" style="width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:15px;"></select></div>
     <div id="walkEmpty" class="card" style="font-size:13px; color:var(--ink-soft);">No pasture walk imported yet. Open "Import a walk" below and choose the Hawkeye CSV.</div>
     <div id="walkBody" style="display:none;">
@@ -1904,7 +1911,7 @@ function switchTab(tab){
   saveBar.style.display = tab === 'today' ? 'flex' : 'none';
   if(tab === 'today'){ todayView.classList.add('active'); tabTodayBtn.classList.add('active'); if(typeof ewCatchupCheck === 'function') ewCatchupCheck(); }
   else if(tab === 'kline'){ klineView.classList.add('active'); tabKlineBtn.classList.add('active'); renderKline(); }
-  else if(tab === 'walk'){ walkView.classList.add('active'); tabWalkBtn.classList.add('active'); renderWalk(); }
+  else if(tab === 'walk'){ walkView.classList.add('active'); tabWalkBtn.classList.add('active'); renderWalk(); renderGrazeWeek(); }
   else if(tab === 'calving'){ calvView.classList.add('active'); tabCalvBtn.classList.add('active'); renderCalving(); }
   else if(tab === 'herd'){ herdView.classList.add('active'); tabHerdBtn.classList.add('active'); renderHerd(); }
   else if(tab === 'settings'){ settingsView.classList.add('active'); tabSettingsBtn.classList.add('active'); renderSettings(); }
@@ -3293,6 +3300,57 @@ function walkAvgCover(w, onDate){
 }
 
 // --- Walk tab ---
+
+// ---------- LAST 7 DAYS GRAZING SUMMARY (Pasture tab) ----------
+function grazeWeekCell(e, mob){
+  if(!e) return '<span style="color:var(--line);">–</span>';
+  if(mob.strip){
+    const sg = e.stripGrazers && e.stripGrazers[mob.id];
+    const cnt = e[mob.countKey];
+    if(!sg || sg.paddock === null || sg.paddock === undefined) return '<span style="color:var(--line);">–</span>';
+    return '<div><b>P' + escapeHtml(String(sg.paddock)) + '</b></div>' + (sg.plannedArea ? '<div>' + Math.round(sg.plannedArea).toLocaleString() + ' m²</div>' : '') + (cnt ? '<div style="color:var(--ink-soft);">' + Math.round(cnt) + ' cows</div>' : '');
+  }
+  const pads = (e.mobPaddocks && e.mobPaddocks[mob.id]) || [], has = (e.mobAreas && e.mobAreas[mob.id]) || [], ses = (e.mobSessions && e.mobSessions[mob.id]) || [];
+  const idx = pads.map((_, i) => i).filter(i => pads[i] !== null && pads[i] !== undefined);
+  if(!idx.length) return '<span style="color:var(--line);">–</span>';
+  const grp = (label, list) => list.map((i, n) => '<div style="display:flex; gap:4px;"><b style="min-width:20px;">' + (n === 0 ? label : '') + '</b><span>P' + escapeHtml(String(pads[i])) + (has[i] ? ' · ' + has[i] : '') + '</span></div>').join('');
+  const am = idx.filter(i => ses[i] === 'am'), pm = idx.filter(i => ses[i] === 'pm'), other = idx.filter(i => ses[i] !== 'am' && ses[i] !== 'pm');
+  let h = '';
+  if(other.length) h += grp('', other);
+  if(am.length) h += grp('AM', am);
+  if(pm.length) h += grp('PM', pm);
+  const cows = e[mob.id];
+  if(cows) h += '<div style="color:var(--ink-soft); margin-top:1px;">' + Math.round(cows) + ' cows</div>';
+  return h;
+}
+function grazeWeekTotalHa(e){
+  if(!e) return null; let t = 0, any = false;
+  MAIN_MOBS.forEach(m => { const pads = (e.mobPaddocks && e.mobPaddocks[m.id]) || [], has = (e.mobAreas && e.mobAreas[m.id]) || []; pads.forEach((p, i) => { if(p !== null && p !== undefined && has[i]){ t += has[i]; any = true; } }); });
+  ALL_STRIP_MOBS.forEach(m => { const sg = e.stripGrazers && e.stripGrazers[m.id]; if(sg && sg.plannedArea){ t += sg.plannedArea / 10000; any = true; } });
+  return any ? t : null;
+}
+function renderGrazeWeek(){
+  const root = document.getElementById('grazeWeekRoot'); if(!root) return;
+  const today = todayKeyReal(), days = [];
+  for(let i = 0; i < 7; i++) days.push(keyOffsetFrom(today, -i));
+  const mobs = [
+    { id:'herd1', label:'Herd 1', always:true }, { id:'herd2', label:'Herd 2', always:true }, { id:'herd3', label:'Herd 3 (Staph)' },
+    { id:'oad', label:'Once a day', strip:true, countKey:'oad' }, { id:'peno', label:'Peno', strip:true, countKey:'peno' }
+  ];
+  if(typeof herd !== 'undefined' && herd.calving){ mobs.push({ id:'newMoms', label:'New moms', strip:true, countKey:'newMomsCount' }, { id:'colostrum', label:'Colostrum', strip:true, countKey:'colostrumCount' }); }
+  const hasData = m => days.some(d => { const e = entries[d]; if(!e) return false; if(m.strip){ const sg = e.stripGrazers && e.stripGrazers[m.id]; return sg && sg.paddock !== null && sg.paddock !== undefined; } return ((e.mobPaddocks && e.mobPaddocks[m.id]) || []).some(p => p !== null && p !== undefined); });
+  const rows = mobs.filter(m => m.always || hasData(m));
+  const th = 'padding:6px 8px; font-size:11px; font-weight:600; text-align:left; border-bottom:2px solid var(--line); background:#fff; white-space:nowrap;';
+  const dayHead = d => { const [y, mo, da] = d.split('-').map(Number), dt = new Date(y, mo - 1, da); return '<th style="' + th + ' min-width:92px;">' + (d === today ? '<span style="color:var(--green);">Today</span>' : dt.toLocaleDateString('en-GB', { weekday:'short' })) + '<div style="font-weight:400; color:var(--ink-soft);">' + dt.toLocaleDateString('en-GB', { day:'numeric', month:'short' }) + '</div></th>'; };
+  const stick = 'position:sticky; left:0; z-index:1; background:#fff; border-right:1px solid var(--line);';
+  let h = '<div style="overflow-x:auto; -webkit-overflow-scrolling:touch; border:1px solid var(--line); border-radius:8px;"><table style="border-collapse:collapse; width:max-content; min-width:100%; font-family:\'IBM Plex Mono\',monospace; font-size:11px;"><thead><tr><th style="' + th + stick + ' z-index:2;"></th>' + days.map(dayHead).join('') + '</tr></thead><tbody>';
+  rows.forEach(m => {
+    h += '<tr><th style="padding:8px; font-size:11px; text-align:left; vertical-align:top; border-bottom:1px solid var(--line); white-space:nowrap; ' + stick + '">' + m.label + '</th>' + days.map(d => '<td style="padding:6px 8px; vertical-align:top; border-bottom:1px solid var(--line); line-height:1.35;">' + grazeWeekCell(entries[d], m) + '</td>').join('') + '</tr>';
+  });
+  h += '<tr><th style="padding:8px; font-size:11px; text-align:left; ' + stick + '">Total ha</th>' + days.map(d => { const t = grazeWeekTotalHa(entries[d]); return '<td style="padding:6px 8px; font-weight:700; color:var(--green);">' + (t === null ? '<span style="color:var(--line); font-weight:400;">–</span>' : (Math.round(t * 10) / 10)) + '</td>'; }).join('') + '</tr>';
+  h += '</tbody></table></div>';
+  root.innerHTML = h;
+}
 function renderWalk(){
   const dates = Object.keys(walks).sort().reverse();
   const sel = document.getElementById('walkSelect');
