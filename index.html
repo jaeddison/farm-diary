@@ -113,6 +113,8 @@
   .mob-row.open .mob-row-body{ display:block; } .mob-row.open .mob-row-head{ background:var(--green-soft); }
   .paddock-grid{ display:grid; grid-template-columns:repeat(6, 1fr); gap:5px; }
   .paddock-btn{ padding:8px 2px; text-align:center; border:1px solid var(--line); border-radius:6px; background:#fff; font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink-soft); cursor:pointer; }
+  .top-cover{ margin-bottom:8px; } .top-cover .tc-label{ font-size:11px; color:var(--ink-soft); margin-bottom:4px; } .top-cover .tc-row{ display:grid; grid-template-columns:repeat(5, 1fr); gap:5px; }
+  .paddock-btn.tc{ padding:5px 2px; line-height:1.15; } .paddock-btn.tc b{ display:block; font-size:13px; color:var(--ink); } .paddock-btn.tc span{ font-size:10px; } .paddock-btn.tc.active-g b{ color:#fff; } .paddock-btn.tc.hi{ border-color:var(--green); }
   .paddock-btn.active-g{ background:var(--green); border-color:var(--green); color:#fff; }
   .paddock-btn.active-b{ background:var(--blue); border-color:var(--blue); color:#fff; }
   .calving-toggle{ display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border:1px dashed var(--line); border-radius:8px; cursor:pointer; font-size:13px; color:var(--ink-soft); margin-top:6px; margin-bottom:8px; }
@@ -415,6 +417,28 @@
 
   <div class="view" id="historyView">
     <input type="text" class="search-box" id="searchBox" placeholder="Search notes or date (e.g. dry matter, 12 July)">
+    <div class="card" data-card="ask" style="margin-top:12px;">
+      <div class="card-head"><span class="dot g"></span><h2>Ask the diary</h2><span class="chevron">▾</span></div>
+      <div class="card-body">
+        <input type="text" class="search-box" id="askBox" placeholder="Type e.g. 549, paddock 14 herd 1, p22 last 30 days" autocomplete="off" style="margin-bottom:6px;">
+        <div id="askRead" style="font-size:12px; color:var(--ink-soft); min-height:16px; margin-bottom:8px;"></div>
+        <div class="field-row">
+          <div class="field"><label>Look up</label><select id="askSubject" style="width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:15px;"><option value="cow">A cow</option><option value="paddock">A paddock</option></select></div>
+          <div class="field"><label id="askValueLabel">Tag</label><input type="text" id="askValue" autocomplete="off" autocapitalize="off"></div>
+        </div>
+        <div class="field-row">
+          <div class="field" id="askHerdWrap"><label>Herd</label><select id="askHerd" style="width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:15px;"></select></div>
+          <div class="field"><label>Period</label><select id="askPeriod" style="width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:15px;"></select></div>
+        </div>
+        <div style="font-size:12px; font-weight:600; margin:6px 0 6px;">Or a ready-made report</div>
+        <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:10px;">
+          <button class="copy-btn" data-askreport="lame" style="margin:0; background:var(--ink-soft);">Cows treated for lameness more than once</button>
+          <button class="copy-btn" data-askreport="since" style="margin:0; background:var(--ink-soft);">Paddocks by days since last grazed</button>
+          <button class="copy-btn" data-askreport="counts" style="margin:0; background:var(--ink-soft);">Visits to each paddock, by herd</button>
+        </div>
+        <div id="askOut"></div>
+      </div>
+    </div>
     <div class="card collapsed" data-card="lamehistory" style="margin-top:12px;">
       <div class="card-head"><span class="dot r"></span><h2>Lame cow history</h2><span class="chevron">▾</span></div>
       <div class="card-body">
@@ -514,6 +538,10 @@
       </div>
     </div>
     <div class="field" id="walkSelectWrap" style="margin-bottom:12px; display:none;"><label>Walk</label><select id="walkSelect" style="width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:15px;"></select></div>
+    <div class="card collapsed" data-card="walkaccuracy">
+      <div class="card-head"><span class="dot b"></span><h2>Forecast accuracy check</h2><span class="chevron">▾</span></div>
+      <div class="card-body"><div id="walkAccRoot"></div></div>
+    </div>
     <div id="walkEmpty" class="card" style="font-size:13px; color:var(--ink-soft);">No pasture walk imported yet. Open "Import a walk" below and choose the Hawkeye CSV.</div>
     <div id="walkBody" style="display:none;">
       <div class="stat-grid" style="margin-bottom:12px;">
@@ -1909,9 +1937,9 @@ function switchTab(tab){
   [todayView, klineView, walkView, herdView, calvView, historyView, settingsView].forEach(v => v.classList.remove('active'));
   [tabTodayBtn, tabKlineBtn, tabWalkBtn, tabHerdBtn, tabCalvBtn, tabHistoryBtn, tabSettingsBtn].forEach(b => b.classList.remove('active'));
   saveBar.style.display = tab === 'today' ? 'flex' : 'none';
-  if(tab === 'today'){ todayView.classList.add('active'); tabTodayBtn.classList.add('active'); if(typeof ewCatchupCheck === 'function') ewCatchupCheck(); }
+  if(tab === 'today'){ todayView.classList.add('active'); tabTodayBtn.classList.add('active'); if(typeof ewCatchupCheck === 'function') ewCatchupCheck(); if(typeof refreshTopStrips === 'function') refreshTopStrips(); }
   else if(tab === 'kline'){ klineView.classList.add('active'); tabKlineBtn.classList.add('active'); renderKline(); }
-  else if(tab === 'walk'){ walkView.classList.add('active'); tabWalkBtn.classList.add('active'); renderWalk(); renderGrazeWeek(); }
+  else if(tab === 'walk'){ walkView.classList.add('active'); tabWalkBtn.classList.add('active'); renderWalk(); renderGrazeWeek(); renderWalkAccuracy(); }
   else if(tab === 'calving'){ calvView.classList.add('active'); tabCalvBtn.classList.add('active'); renderCalving(); }
   else if(tab === 'herd'){ herdView.classList.add('active'); tabHerdBtn.classList.add('active'); renderHerd(); }
   else if(tab === 'settings'){ settingsView.classList.add('active'); tabSettingsBtn.classList.add('active'); renderSettings(); }
@@ -2096,6 +2124,53 @@ function buildMainMobRow(mob){
   renderMobSlots(mob.id);
   return row;
 }
+// ---------- TOP-COVER SHORTCUT ROW (above each paddock selector on Today) ----------
+// Highest-cover paddocks for the viewed day, from the newest walk on or before that day,
+// grown forward by each paddock's own rate (farm average if it has none). Paddocks already
+// grazed since they were measured, or out of the round that day, are left out.
+function topCoverFor(dateKey, n){
+  const dates = Object.keys(walks).sort().filter(d => d <= dateKey);
+  if(!dates.length) return null;
+  const wd = dates[dates.length - 1], w = walks[wd], prev = dates[dates.length - 2], idx = buildGrazedIndex();
+  const rates = prev ? walkRatesBetween(prev, wd, idx) : { byPad:{}, avg:null };
+  const byKey = {}; PADDOCKS.forEach(p => { byKey[pk(p)] = p; });
+  const out = [];
+  Object.keys(w.paddocks).forEach(k => {
+    const label = byKey[k]; if(label === undefined) return;
+    if(isExcludedOn(k, dateKey)) return;
+    const p = w.paddocks[k], measured = p.measured || wd;
+    if((idx[k] || []).some(d => d >= measured && d < dateKey)) return;
+    const rate = rates.byPad[k] !== undefined ? rates.byPad[k] : rates.avg;
+    const days = Math.max(0, daysBetweenKeys(measured, dateKey));
+    const est = rate !== null && days > 0;
+    out.push({ p:label, cover:Math.max(0, p.cover + (est ? rate * days : 0)), est });
+  });
+  out.sort((a, b) => b.cover - a.cover);
+  return { walk:wd, list:out.slice(0, n || 10) };
+}
+function refreshTopStrips(){
+  const els = document.querySelectorAll('[data-top-for]'); if(!els.length) return;
+  const top = topCoverFor(selectedDateKey, 10), pre = pastureSettings.pre;
+  els.forEach(el => {
+    if(!top || !top.list.length){ el.innerHTML = ''; return; }
+    const spec = el.dataset.topFor.split(':'), grid = document.querySelector(spec[0] === 'mslot' ? '[data-mslot-grid="' + spec[1] + '"]' : '[data-strip-grid="' + spec[1] + '"]');
+    const act = grid && grid.querySelector('.active-g') ? grid.querySelector('.active-g').textContent : null;
+    const anyEst = top.list.some(x => x.est);
+    el.innerHTML = '<div class="tc-label">Highest cover · ' + (anyEst ? 'estimated for ' + fmtShort(selectedDateKey) : 'walk ' + fmtShort(top.walk)) + ' (kg DM/ha)</div><div class="tc-row">' + top.list.map(x => '<div class="paddock-btn tc' + (x.cover >= pre ? ' hi' : '') + (act !== null && String(x.p) === String(act) ? ' active-g' : '') + '" data-tcp="' + escapeHtml(String(x.p)) + '"><b>' + escapeHtml(String(x.p)) + '</b><span>' + Math.round(x.cover) + '</span></div>').join('') + '</div>';
+  });
+}
+document.addEventListener('click', e => {
+  const tc = e.target.closest && e.target.closest('.paddock-btn.tc');
+  if(tc){
+    const host = tc.closest('[data-top-for]'), spec = host.dataset.topFor.split(':');
+    const grid = document.querySelector(spec[0] === 'mslot' ? '[data-mslot-grid="' + spec[1] + '"]' : '[data-strip-grid="' + spec[1] + '"]');
+    const btn = grid && Array.from(grid.children).find(b => b.textContent === tc.dataset.tcp);
+    if(btn) btn.click();
+    refreshTopStrips(); return;
+  }
+  if(e.target.closest && e.target.closest('[data-mslot-grid],[data-strip-grid]')) setTimeout(refreshTopStrips, 0);
+});
+
 function renderMobSlots(mobId){
   const container = document.querySelector(`[data-slots-container="${mobId}"]`);
   if(!container) return;
@@ -2120,6 +2195,7 @@ function renderMobSlots(mobId){
           <label style="font-size:11px; color:var(--ink-soft); margin:0;">Paddock ${n+1}</label>
           ${n > 0 ? `<button data-remove-slot="${mobId}-${s}" style="border:none; background:none; color:var(--rust); font-size:12px; font-weight:600; cursor:pointer; padding:2px 6px;">Remove</button>` : ''}
         </div>
+        <div class="top-cover" data-top-for="mslot:${mobId}-${s}"></div>
         <div class="paddock-grid" data-mslot-grid="${mobId}-${s}" style="margin-bottom:8px;"></div>
         <div class="field"><label>Area (ha, 1 decimal)</label><input type="number" data-mslot-ha="${mobId}-${s}" step="0.1" inputmode="decimal"></div>
         <div data-slot-cows="${mobId}-${s}" style="font-size:12px; color:var(--green); font-weight:600; margin-top:-4px;"></div>
@@ -2186,6 +2262,7 @@ function renderMobSlots(mobId){
   });
   updateMobChips(mobId);
   updateBreakInfo(mobId);
+  refreshTopStrips();
 }
 function updateMobChips(mobId){
   const chipsEl = document.querySelector(`[data-chips="${mobId}"]`); if(!chipsEl) return;
@@ -2251,6 +2328,7 @@ function buildStripWidget(mob){
     </div>
     <div class="mob-row-body">
       ${mob.hasCount ? `<div class="field-row"><div class="field"><label>Headcount</label><input type="number" data-strip-count="${mob.id}" inputmode="numeric"></div></div>` : ''}
+      <div class="top-cover" data-top-for="strip:${mob.id}"></div>
       <div class="paddock-grid" data-strip-grid="${mob.id}" style="margin-bottom:10px;"></div>
       <div class="field-row" style="margin-bottom:0;">
         <div class="field"><label>Planned area (m²)</label><input type="number" data-strip-area="${mob.id}" inputmode="numeric" placeholder="${mob.optionalZero ? '0' : ''}"></div>
@@ -2632,6 +2710,7 @@ function loadDateIntoForm(){
   ALL_STRIP_MOBS.forEach(m => refreshStripTally(m.id));
   renderSupp();
   applyHerdToForm();
+  refreshTopStrips();
   updateSolidsPerCow(); updateGrazingTotals(); renderTrends(); renderRoundTotals();
 }
 loadDateIntoForm();
@@ -3351,6 +3430,63 @@ function renderGrazeWeek(){
   h += '</tbody></table></div>';
   root.innerHTML = h;
 }
+
+// ---------- FORECAST ACCURACY CHECK (read-only) ----------
+// For every walk with two walks before it: take the growth rates measured between the two earlier walks, apply them
+// forward to the earlier of the pair, and compare with what the later walk actually measured. Uses only walks that
+// existed at the time, and the same "not grazed in between" rule as the live growth figure. Changes nothing.
+function walkRatesBetween(da, db, idx){
+  const A = walks[da], B = walks[db], byPad = {}; let sum = 0, area = 0;
+  Object.keys(B.paddocks).forEach(k => {
+    const b = B.paddocks[k], a = A.paddocks[k]; if(!a || isExcludedOn(k, db)) return;
+    const mB = b.measured || db, mA = a.measured || da, days = daysBetweenKeys(mA, mB);
+    if(days < 3) return;
+    if((idx[k] || []).some(d => d >= mA && d <= mB)) return;
+    const g = (b.cover - a.cover) / days; byPad[k] = g; sum += g * (b.area || 0); area += (b.area || 0);
+  });
+  return { byPad, avg: area > 0 ? sum / area : null };
+}
+function walkBacktest(){
+  const dates = Object.keys(walks).sort(), idx = buildGrazedIndex(), runs = [], all = [];
+  for(let i = 2; i < dates.length; i++){
+    const da = dates[i - 2], db = dates[i - 1], dc = dates[i];
+    const r = walkRatesBetween(da, db, idx); if(r.avg === null) continue;
+    const B = walks[db], C = walks[dc], rows = [];
+    Object.keys(C.paddocks).forEach(k => {
+      const b = B.paddocks[k], c = C.paddocks[k]; if(!b || isExcludedOn(k, dc)) return;
+      const mB = b.measured || db, mC = c.measured || dc, days = daysBetweenKeys(mB, mC);
+      if(days < 1) return;
+      if((idx[k] || []).some(d => d >= mB && d <= mC)) return;
+      const own = b.cover + (r.byPad[k] !== undefined ? r.byPad[k] : r.avg) * days, avg = b.cover + r.avg * days, flat = b.cover;
+      rows.push({ k, start:b.cover, actual:c.cover, days, eOwn:own - c.cover, eAvg:avg - c.cover, eFlat:flat - c.cover });
+    });
+    if(rows.length){ runs.push({ da, db, dc, rate:r.avg, rows }); rows.forEach(x => all.push(x)); }
+  }
+  return { runs, all };
+}
+function renderWalkAccuracy(){
+  const root = document.getElementById('walkAccRoot'); if(!root) return;
+  const { runs, all } = walkBacktest();
+  const mae = (a, f) => a.length ? a.reduce((s, x) => s + Math.abs(x[f]), 0) / a.length : null;
+  const bias = (a, f) => a.length ? a.reduce((s, x) => s + x[f], 0) / a.length : null;
+  const n = v => v === null ? '–' : Math.round(v).toLocaleString();
+  const sg = v => v === null ? '–' : (v > 0 ? '+' : '') + Math.round(v).toLocaleString();
+  const note = '<div style="font-size:11px; color:var(--ink-soft); margin-bottom:10px;">Read-only. It does not change any forecast.</div>';
+  if(!all.length){ root.innerHTML = note + '<div style="font-size:13px; color:var(--ink-soft);">Needs at least three walks, with some paddocks measured on all three and not grazed between them. Nothing to check yet.</div>'; return; }
+  const small = all.length < 30 || runs.length < 3;
+  let h = note + '<div style="font-size:13px; margin-bottom:8px;">' + all.length + ' paddock predictions from ' + runs.length + ' walk' + (runs.length > 1 ? 's' : '') + ', each using only the walks before it. Average miss in kg DM/ha (lower is better; bias + means the estimate ran too high):</div>';
+  h += '<table style="border-collapse:collapse; width:100%; font-size:12px; font-family:\'IBM Plex Mono\',monospace; margin-bottom:10px;"><thead><tr style="text-align:left;"><th style="padding:4px 6px;">Method</th><th style="padding:4px 6px; text-align:right;">Miss</th><th style="padding:4px 6px; text-align:right;">Bias</th></tr></thead><tbody>'
+    + [['Each paddock\'s own rate (current)', 'eOwn'], ['Farm average rate for all', 'eAvg'], ['No growth (flat)', 'eFlat']].map(m => '<tr style="border-top:1px solid var(--line);"><td style="padding:5px 6px;">' + m[0] + '</td><td style="padding:5px 6px; text-align:right; font-weight:700;">±' + n(mae(all, m[1])) + '</td><td style="padding:5px 6px; text-align:right;">' + sg(bias(all, m[1])) + '</td></tr>').join('') + '</tbody></table>';
+  const mo = mae(all, 'eOwn'), ma = mae(all, 'eAvg');
+  h += '<div style="font-size:13px; margin-bottom:10px;">' + (ma < mo - 5 ? 'The farm average rate did better than each paddock\'s own rate by about ' + n(mo - ma) + ' kg, so own-paddock rates look noisy.' : (mo < ma - 5 ? 'Each paddock\'s own rate did better than the farm average by about ' + n(ma - mo) + ' kg, so own-paddock rates are carrying real information.' : 'Own-paddock and farm-average rates did about the same.')) + '</div>';
+  const bands = [['Under 2,200', x => x.start < 2200], ['2,200 – 2,800', x => x.start >= 2200 && x.start <= 2800], ['Over 2,800', x => x.start > 2800]];
+  h += '<div style="font-size:12px; font-weight:600; margin:10px 0 4px;">By starting cover (current method)</div><div style="font-family:\'IBM Plex Mono\',monospace; font-size:12px;">' + bands.map(b => { const a = all.filter(b[1]); return '<div style="display:flex; justify-content:space-between; padding:3px 0; border-top:1px solid var(--line);"><span>' + b[0] + ' (' + a.length + ')</span><span>' + (a.length ? '±' + n(mae(a, 'eOwn')) + ' · bias ' + sg(bias(a, 'eOwn')) : '–') + '</span></div>'; }).join('') + '</div>';
+  h += '<div style="font-size:12px; font-weight:600; margin:12px 0 4px;">By walk</div><div style="overflow-x:auto;"><table style="border-collapse:collapse; width:max-content; min-width:100%; font-size:11px; font-family:\'IBM Plex Mono\',monospace;"><thead><tr style="text-align:left;"><th style="padding:4px 6px;">Predicted walk</th><th style="padding:4px 6px;">Pads</th><th style="padding:4px 6px;">Days</th><th style="padding:4px 6px;">Rate</th><th style="padding:4px 6px;">Own</th><th style="padding:4px 6px;">Avg</th><th style="padding:4px 6px;">Flat</th><th style="padding:4px 6px;">Bias</th></tr></thead><tbody>'
+    + runs.slice().reverse().map(r => '<tr style="border-top:1px solid var(--line);"><td style="padding:4px 6px; white-space:nowrap;">' + fmtShort(r.dc) + '</td><td style="padding:4px 6px;">' + r.rows.length + '</td><td style="padding:4px 6px;">' + Math.round(r.rows.reduce((s, x) => s + x.days, 0) / r.rows.length) + '</td><td style="padding:4px 6px;">' + Math.round(r.rate) + '</td><td style="padding:4px 6px;">±' + n(mae(r.rows, 'eOwn')) + '</td><td style="padding:4px 6px;">±' + n(mae(r.rows, 'eAvg')) + '</td><td style="padding:4px 6px;">±' + n(mae(r.rows, 'eFlat')) + '</td><td style="padding:4px 6px;">' + sg(bias(r.rows, 'eOwn')) + '</td></tr>').join('') + '</tbody></table></div>';
+  h += '<div style="font-size:11px; color:var(--ink-soft); margin-top:8px;">Rate = farm average growth (kg DM/ha/day) measured from the two earlier walks. Days = average gap the prediction had to cover.</div>';
+  if(small) h += '<div style="font-size:12px; color:var(--rust); margin-top:8px;">Small sample (' + all.length + ' predictions, ' + runs.length + ' walk' + (runs.length > 1 ? 's' : '') + ') — treat these as rough until more walks are in.</div>';
+  root.innerHTML = h;
+}
 function renderWalk(){
   const dates = Object.keys(walks).sort().reverse();
   const sel = document.getElementById('walkSelect');
@@ -4053,6 +4189,123 @@ document.getElementById('lookupClearBtn').addEventListener('click', () => {
   renderLookupResults();
 });
 document.querySelector('[data-card="paddocklookup"]').classList.add('collapsed');
+
+// ---------- ASK THE DIARY (fixed lookups with a forgiving text box; no AI) ----------
+const askState = { subject:'cow', value:'', herd:'', period:'all', report:null };
+const ASK_PERIODS = [['all', 'All time'], ['season', 'This season (since 1 Jun)'], ['90', 'Last 90 days'], ['30', 'Last 30 days'], ['7', 'Last 7 days']];
+function askPeriodStart(p){ const t = todayKeyReal(); if(p === 'all') return '0000-00-00'; if(p === 'season'){ const y = +t.slice(0, 4), m = +t.slice(5, 7); return (m >= 6 ? y : y - 1) + '-06-01'; } return keyOffsetFrom(t, -(+p)); }
+function askPeriodLabel(p){ const x = ASK_PERIODS.find(a => a[0] === p); return x ? x[1] : p; }
+function askParse(txt){
+  let t = ' ' + String(txt).toLowerCase().replace(/[’']s\b/g, '').replace(/[?!,.]/g, ' ') + ' ';
+  const out = {};
+  const per = [[/\b(this season|season|since june|this year)\b/, 'season'], [/\b(last 90 days|90 days|three months|3 months|quarter)\b/, '90'], [/\b(last 30 days|30 days|last month|this month)\b/, '30'], [/\b(last 7 days|7 days|last week|this week)\b/, '7']];
+  per.forEach(x => { if(!out.period && x[0].test(t)){ out.period = x[1]; t = t.replace(x[0], ' '); } });
+  const hs = [[/\b(herd 1|herd one|first herd|1st herd|h1)\b/, 'Herd 1'], [/\b(herd 2|herd two|second herd|2nd herd|h2)\b/, 'Herd 2'], [/\b(herd 3|herd three|third herd|staph|h3)\b/, 'Herd 3 (Staph)'], [/\b(once a day|once-a-day|oad)\b/, 'OAD'], [/\b(peno|penicillin)\b/, 'PENO'], [/\bcolostrum\b/, 'Colostrum'], [/\bnew (moms|mums|mom|mum)\b/, 'New Moms']];
+  hs.forEach(x => { if(out.herd === undefined && x[0].test(t)){ out.herd = x[1]; t = t.replace(x[0], ' '); } });
+  let m = t.match(/\b(?:paddock|paddocks|pdk|pad)\s*#?\s*(\d+[a-z]?)\b/) || t.match(/\bp\s?(\d+[a-z]?)\b/);
+  if(m){ out.subject = 'paddock'; out.value = m[1]; return out; }
+  if(/\b(paddock|paddocks|pdk)\b/.test(t)){ out.subject = 'paddock'; out.value = ''; return out; }
+  m = t.match(/\b(?:cow|tag|number|no|#)\s*#?\s*(\d{1,4})\b/) || t.match(/#\s*(\d{1,4})\b/) || t.match(/\b(\d{1,4})\b/);
+  if(m){ out.subject = 'cow'; out.value = m[1]; }
+  return out;
+}
+function askVisits(dates){ const d = dates.slice().sort(); const v = []; d.forEach(x => { const last = v[v.length - 1]; if(last && daysBetweenKeys(last.end, x) <= 2){ last.end = x; last.days++; } else v.push({ start:x, end:x, days:1 }); }); return v; }
+function askGrazeMap(startKey){
+  const map = {}; const add = (p, label, d) => { if(p === null || p === undefined || p === '') return; const k = pk(p); ((map[k] = map[k] || {})[label] = map[k][label] || []).push(d); };
+  Object.keys(entries).sort().forEach(d => { if(d < startKey) return; const e = entries[d];
+    MAIN_MOBS.forEach(m => { const seen = new Set(); normalizeSlotArray(e.mobPaddocks && e.mobPaddocks[m.id]).forEach(v => { if(v !== null && v !== undefined && !seen.has(String(v))){ seen.add(String(v)); add(v, m.label, d); } }); });
+    ALL_STRIP_MOBS.forEach(m => { const sg = e.stripGrazers && e.stripGrazers[m.id]; if(sg) add(sg.paddock, m.label, d); });
+  });
+  return map;
+}
+function askTable(heads, rows){ return '<div style="overflow-x:auto; border:1px solid var(--line); border-radius:8px;"><table style="border-collapse:collapse; width:max-content; min-width:100%; font-family:\'IBM Plex Mono\',monospace; font-size:12px;"><thead><tr style="text-align:left; background:var(--paper);">' + heads.map(x => '<th style="padding:6px 8px;">' + x + '</th>').join('') + '</tr></thead><tbody>' + rows.map(r => '<tr style="border-top:1px solid var(--line);">' + r.map(c => '<td style="padding:5px 8px; white-space:nowrap;">' + c + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>'; }
+function askCowHtml(tag, period){
+  const start = askPeriodStart(period), today = todayKeyReal(), items = [];
+  herdSortedEvents().filter(e => e.tag === tag).forEach(e => items.push({ d:e.date, k:'Move', t:(e.to ? '→ ' + herdGroupLabel(e.to) : (e.st !== undefined ? (e.st ? 'Staph on' : 'Staph off') : 'Change')) + (e.note ? ' — ' + escapeHtml(e.note) : '') }));
+  calvRecs().filter(r => r.tag === tag).forEach(r => items.push({ d:r.date, k:'Calved', t:'Bay ' + bayShort(r.bay) + ' · ' + calvSummaryOf(r) }));
+  Object.values(herd.tx).filter(t => t.tag === tag).forEach(t => items.push({ d:t.date, k:'Treated', t:escapeHtml(t.treatment || '') + (t.loc ? ' · ' + escapeHtml(t.loc) : '') + ' (meat clear)' }));
+  const lames = Object.keys(herd.lame).map(id => herd.lame[id]).filter(l => l.tag === tag);
+  lames.forEach(l => items.push({ d:l.cleared || l.added, k:'Lame', t:((l.feet && l.feet.length) ? l.feet.join(' ') : 'foot not recorded') + (l.cleared ? ' — treated ' + formatDateNice(l.cleared) : ' — active since ' + formatDateNice(l.added)) + (l.where ? ' (' + escapeHtml(l.where) + ')' : '') }));
+  const st = herdStateAt(today), c = st && st[tag];
+  const shown = items.filter(i => i.d >= start).sort((a, b) => b.d.localeCompare(a.d));
+  let h = '<div style="font-family:\'Roboto Slab\',serif; font-size:16px;">Cow ' + escapeHtml(tag) + '</div>';
+  h += '<div style="font-size:12px; color:var(--ink-soft); margin-bottom:6px;">' + (c ? 'Now in ' + herdGroupLabel(c.g) + (c.st ? ' (staph)' : '') + ' since ' + formatDateNice(c.since) : (st ? 'Not in the herd lists today' : 'Herd tracking not started')) + '</div>';
+  const feet = {}; lames.forEach(l => (l.feet || []).forEach(f => feet[f] = (feet[f] || 0) + 1));
+  const bits = [];
+  if(lames.length) bits.push(lames.length + ' lame record' + (lames.length > 1 ? 's' : '') + (Object.keys(feet).length ? ' (' + Object.keys(feet).map(f => f + ' ×' + feet[f]).join(', ') + ')' : ''));
+  const nc = calvRecs().filter(r => r.tag === tag).length; if(nc) bits.push(nc + ' calving' + (nc > 1 ? 's' : ''));
+  const nm = herdSortedEvents().filter(e => e.tag === tag && e.to).length; if(nm) bits.push(nm + ' herd move' + (nm > 1 ? 's' : ''));
+  if(herd.flags[tag] && herd.flags[tag].skinny) bits.push('flagged skinny');
+  if(bits.length) h += '<div style="font-size:13px; margin-bottom:8px;">' + bits.join(' · ') + '</div>';
+  if(!shown.length) return h + '<div class="herd-note">Nothing recorded for this tag' + (period !== 'all' ? ' in this period' : '') + '. Records only go back to when each part of the app started being used.</div>';
+  return h + shown.map(i => '<div style="display:flex; gap:8px; padding:5px 0; border-top:1px solid var(--line); font-size:12px;"><span style="min-width:70px; color:var(--ink-soft);">' + fmtShort(i.d) + ' ' + i.d.slice(2, 4) + '</span><b style="min-width:52px;">' + i.k + '</b><span>' + i.t + '</span></div>').join('');
+}
+function askPaddockHtml(p, herdLabel, period){
+  const start = askPeriodStart(period), today = todayKeyReal();
+  if(!String(p).trim()) return '<div class="herd-note">Enter a paddock number.</div>';
+  let hits = grazingHistoryForPaddock(p).filter(h => h.date >= start);
+  if(herdLabel) hits = hits.filter(h => h.mobs.indexOf(herdLabel) >= 0);
+  let h = '<div style="font-family:\'Roboto Slab\',serif; font-size:16px;">Paddock ' + escapeHtml(String(p)) + (herdLabel ? ' · ' + escapeHtml(herdLabel) : '') + '</div><div style="font-size:12px; color:var(--ink-soft); margin-bottom:6px;">' + askPeriodLabel(period) + '</div>';
+  const cw = latestWalkWith(pk(p)); if(cw) h += '<div style="font-size:12px; color:var(--ink-soft); margin-bottom:6px;">Cover ' + Math.round(cw.data.cover) + ' kg DM/ha (walk ' + fmtShort(cw.date) + ') · ' + cw.data.area.toFixed(2) + ' ha</div>';
+  if(!hits.length) return h + '<div class="herd-note">No grazing recorded' + (herdLabel ? ' for ' + escapeHtml(herdLabel) : '') + ' in this period.</div>';
+  const visits = askVisits(hits.map(x => x.date)), last = hits[hits.length - 1].date, ago = daysBetweenKeys(last, today);
+  const gaps = []; for(let i = 1; i < visits.length; i++) gaps.push(daysBetweenKeys(visits[i - 1].start, visits[i].start));
+  h += '<div style="font-size:13px; margin-bottom:8px;"><b>' + visits.length + ' visit' + (visits.length > 1 ? 's' : '') + '</b> (' + hits.length + ' day' + (hits.length > 1 ? 's' : '') + ')' + (gaps.length ? ' · about ' + Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length) + ' days between visits' : '') + '<br>Last grazed ' + formatDateNice(last) + ' (' + (ago === 0 ? 'today' : ago === 1 ? 'yesterday' : ago + ' days ago') + ')</div>';
+  if(!herdLabel){
+    const byH = {}; hits.forEach(x => x.mobs.forEach(m => (byH[m] = byH[m] || []).push(x.date)));
+    h += '<div style="font-size:12px; margin-bottom:8px;">' + Object.keys(byH).map(m => '<b>' + escapeHtml(m) + '</b> ' + askVisits(byH[m]).length + ' visit' + (askVisits(byH[m]).length > 1 ? 's' : '') + ' (' + byH[m].length + ' day' + (byH[m].length > 1 ? 's' : '') + ')').join(' · ') + '</div>';
+  }
+  return h + hits.slice().reverse().slice(0, 40).map(x => '<div class="kline-history-item"><span>' + formatDateNice(x.date) + '</span><span>' + escapeHtml(x.mobs.join(', ')) + '</span></div>').join('') + (hits.length > 40 ? '<div class="herd-note">Showing the latest 40 days.</div>' : '');
+}
+function askReportHtml(r, period){
+  const start = askPeriodStart(period), today = todayKeyReal();
+  if(r === 'lame'){
+    const by = {}; Object.keys(herd.lame).forEach(id => { const l = herd.lame[id]; if(l.cleared && l.cleared < start) return; if(!l.cleared && l.added < start) return; (by[l.tag] = by[l.tag] || []).push(l); });
+    const rows = Object.keys(by).filter(t => by[t].length >= 2).map(t => { const f = {}; by[t].forEach(l => (l.feet || []).forEach(x => f[x] = (f[x] || 0) + 1)); const lastD = by[t].map(l => l.cleared || l.added).sort().pop(); return { t, n:by[t].length, feet:Object.keys(f).map(x => x + ' ×' + f[x]).join(', ') || '–', last:lastD }; }).sort((a, b) => b.n - a.n || b.last.localeCompare(a.last));
+    const singles = Object.keys(by).filter(t => by[t].length === 1).length;
+    return '<div style="font-family:\'Roboto Slab\',serif; font-size:16px;">Cows treated for lameness more than once</div><div style="font-size:12px; color:var(--ink-soft); margin-bottom:6px;">' + askPeriodLabel(period) + ' · ' + singles + ' other cow' + (singles === 1 ? '' : 's') + ' had one record</div>' + (rows.length ? askTable(['Tag', 'Times', 'Feet', 'Latest'], rows.map(x => [x.t, x.n, x.feet, fmtShort(x.last)])) : '<div class="herd-note">No cow has more than one lame record in this period.</div>');
+  }
+  if(r === 'since'){
+    const idx = buildGrazedIndex(), rows = PADDOCKS.filter(p => !isExcludedOn(pk(p), today)).map(p => { const d = idx[pk(p)]; const last = d && d.length ? d[d.length - 1] : null; return { p, last, ago:last ? daysBetweenKeys(last, today) : 99999 }; }).sort((a, b) => b.ago - a.ago);
+    return '<div style="font-family:\'Roboto Slab\',serif; font-size:16px;">Paddocks by days since last grazed</div><div style="font-size:12px; color:var(--ink-soft); margin-bottom:6px;">Longest first. Paddocks out of the round today are left out.</div>' + askTable(['Paddock', 'Last grazed', 'Days'], rows.map(x => [escapeHtml(String(x.p)), x.last ? fmtShort(x.last) + ' ' + x.last.slice(2, 4) : 'no record', x.last ? x.ago : '–']));
+  }
+  if(r === 'counts'){
+    const map = askGrazeMap(start), labels = MAIN_MOBS.concat(ALL_STRIP_MOBS).map(m => m.label).filter(l => Object.keys(map).some(k => map[k][l]));
+    const rows = PADDOCKS.map(p => { const m = map[pk(p)] || {}; let tot = 0; const cells = labels.map(l => { const n = m[l] ? askVisits(m[l]).length : 0; tot += n; return n; }); return { p, cells, tot }; }).sort((a, b) => a.tot - b.tot || String(a.p).localeCompare(String(b.p), undefined, { numeric:true }));
+    return '<div style="font-family:\'Roboto Slab\',serif; font-size:16px;">Visits to each paddock, by herd</div><div style="font-size:12px; color:var(--ink-soft); margin-bottom:6px;">' + askPeriodLabel(period) + ' · fewest visits first. A visit is one stay, however many consecutive days.</div>' + (labels.length ? askTable(['Paddock'].concat(labels, ['Total']), rows.map(x => [escapeHtml(String(x.p))].concat(x.cells.map(c => c || '·'), ['<b>' + x.tot + '</b>']))) : '<div class="herd-note">No grazing recorded in this period.</div>');
+  }
+  return '';
+}
+function askRender(){
+  const subj = askState.subject, out = document.getElementById('askOut');
+  document.getElementById('askSubject').value = subj;
+  document.getElementById('askValue').value = askState.value;
+  document.getElementById('askValueLabel').textContent = subj === 'cow' ? 'Tag' : 'Paddock';
+  document.getElementById('askHerd').value = askState.herd;
+  document.getElementById('askPeriod').value = askState.period;
+  document.getElementById('askHerdWrap').style.display = subj === 'paddock' ? '' : 'none';
+  const read = document.getElementById('askRead');
+  if(askState.report){ read.textContent = ''; out.innerHTML = askReportHtml(askState.report, askState.period); return; }
+  const v = askState.value.trim();
+  read.textContent = v ? 'Read as: ' + (subj === 'cow' ? 'Cow ' + v : 'Paddock ' + v + (askState.herd ? ' · ' + askState.herd : '')) + ' · ' + askPeriodLabel(askState.period) : '';
+  out.innerHTML = v ? (subj === 'cow' ? askCowHtml(v, askState.period) : askPaddockHtml(v, askState.herd, askState.period)) : '';
+}
+(function initAsk(){
+  document.getElementById('askHerd').innerHTML = '<option value="">All herds</option>' + MAIN_MOBS.concat(ALL_STRIP_MOBS).map(m => '<option value="' + escapeHtml(m.label) + '">' + escapeHtml(m.label) + '</option>').join('');
+  document.getElementById('askPeriod').innerHTML = ASK_PERIODS.map(a => '<option value="' + a[0] + '">' + a[1] + '</option>').join('');
+  document.getElementById('askBox').addEventListener('input', e => {
+    const r = askParse(e.target.value); askState.report = null;
+    if(r.subject){ askState.subject = r.subject; askState.value = r.value; }
+    askState.herd = r.herd !== undefined ? r.herd : ''; askState.period = r.period || 'all';
+    if(!e.target.value.trim()){ askState.value = ''; }
+    askRender();
+  });
+  document.getElementById('askSubject').addEventListener('change', e => { askState.subject = e.target.value; askState.report = null; askRender(); });
+  document.getElementById('askValue').addEventListener('input', e => { askState.value = e.target.value; askState.report = null; askRender(); document.getElementById('askValue').focus(); });
+  document.getElementById('askHerd').addEventListener('change', e => { askState.herd = e.target.value; askState.report = null; askRender(); });
+  document.getElementById('askPeriod').addEventListener('change', e => { askState.period = e.target.value; askRender(); });
+  document.querySelectorAll('[data-askreport]').forEach(b => b.addEventListener('click', () => { askState.report = b.dataset.askreport; askRender(); }));
+})();
 
 // ---------- EXPORT ----------
 let exportDataset = 'production';
