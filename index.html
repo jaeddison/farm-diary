@@ -776,6 +776,7 @@ const PADDOCKS = [1,2,3,4,5,6,7,14,15,16,17,18,19,20,21,22,23,24,25,'25a',26,'26
 const POD1_PADDOCKS = [4,5,14,15,16,17];
 const POD3_PADDOCKS = [48,49,55,56,64,65];
 
+const WALK_MIN_COVER = 500, WALK_MAX_RATE = 250;
 const MAIN_MOBS = [ {id:'herd1', label:'Herd 1'}, {id:'herd2', label:'Herd 2'}, {id:'herd3', label:'Herd 3 (Staph)'} ];
 const STRIP_MAIN_MOBS = [ {id:'peno', label:'PENO'}, {id:'oad', label:'OAD'} ];
 const STRIP_CALVING_MOBS = [ {id:'newMoms', label:'New Moms', optionalZero:true, hasCount:true}, {id:'colostrum', label:'Colostrum', hasCount:true} ];
@@ -2126,7 +2127,7 @@ function buildMainMobRow(mob){
 }
 // ---------- TOP-COVER SHORTCUT ROW (above each paddock selector on Today) ----------
 // Highest-cover paddocks for the viewed day, from the newest walk on or before that day,
-// grown forward by each paddock's own rate (farm average if it has none). Paddocks already
+// grown forward by the farm-average rate. Paddocks already
 // grazed since they were measured, or out of the round that day, are left out.
 function topCoverFor(dateKey, n){
   const dates = Object.keys(walks).sort().filter(d => d <= dateKey);
@@ -2140,7 +2141,7 @@ function topCoverFor(dateKey, n){
     if(isExcludedOn(k, dateKey)) return;
     const p = w.paddocks[k], measured = p.measured || wd;
     if((idx[k] || []).some(d => d >= measured && d < dateKey)) return;
-    const rate = rates.byPad[k] !== undefined ? rates.byPad[k] : rates.avg;
+    const rate = rates.avg;
     const days = Math.max(0, daysBetweenKeys(measured, dateKey));
     const est = rate !== null && days > 0;
     out.push({ p:label, cover:Math.max(0, p.cover + (est ? rate * days : 0)), est });
@@ -3435,25 +3436,30 @@ function renderGrazeWeek(){
 // For every walk with two walks before it: take the growth rates measured between the two earlier walks, apply them
 // forward to the earlier of the pair, and compare with what the later walk actually measured. Uses only walks that
 // existed at the time, and the same "not grazed in between" rule as the live growth figure. Changes nothing.
+// A reading under 500 kg DM/ha (a meter glitch, say) or a growth rate over 250 kg/ha/day isn't believable,
+// so it's left out of growth rates and the accuracy check instead of dragging the farm average around.
+function walkReadingOk(c){ return typeof c === 'number' && c >= WALK_MIN_COVER; }
 function walkRatesBetween(da, db, idx){
   const A = walks[da], B = walks[db], byPad = {}; let sum = 0, area = 0;
   Object.keys(B.paddocks).forEach(k => {
     const b = B.paddocks[k], a = A.paddocks[k]; if(!a || isExcludedOn(k, db)) return;
+    if(!walkReadingOk(a.cover) || !walkReadingOk(b.cover)) return;
     const mB = b.measured || db, mA = a.measured || da, days = daysBetweenKeys(mA, mB);
     if(days < 3) return;
     if((idx[k] || []).some(d => d >= mA && d <= mB)) return;
-    const g = (b.cover - a.cover) / days; byPad[k] = g; sum += g * (b.area || 0); area += (b.area || 0);
+    const g = (b.cover - a.cover) / days; if(Math.abs(g) > WALK_MAX_RATE) return; byPad[k] = g; sum += g * (b.area || 0); area += (b.area || 0);
   });
   return { byPad, avg: area > 0 ? sum / area : null };
 }
 function walkBacktest(){
-  const dates = Object.keys(walks).sort(), idx = buildGrazedIndex(), runs = [], all = [];
+  const dates = Object.keys(walks).sort(), idx = buildGrazedIndex(), runs = [], all = []; let skipped = 0;
   for(let i = 2; i < dates.length; i++){
     const da = dates[i - 2], db = dates[i - 1], dc = dates[i];
     const r = walkRatesBetween(da, db, idx); if(r.avg === null) continue;
     const B = walks[db], C = walks[dc], rows = [];
     Object.keys(C.paddocks).forEach(k => {
       const b = B.paddocks[k], c = C.paddocks[k]; if(!b || isExcludedOn(k, dc)) return;
+      if(!walkReadingOk(b.cover) || !walkReadingOk(c.cover)){ skipped++; return; }
       const mB = b.measured || db, mC = c.measured || dc, days = daysBetweenKeys(mB, mC);
       if(days < 1) return;
       if((idx[k] || []).some(d => d >= mB && d <= mC)) return;
@@ -3462,11 +3468,11 @@ function walkBacktest(){
     });
     if(rows.length){ runs.push({ da, db, dc, rate:r.avg, rows }); rows.forEach(x => all.push(x)); }
   }
-  return { runs, all };
+  return { runs, all, skipped };
 }
 function renderWalkAccuracy(){
   const root = document.getElementById('walkAccRoot'); if(!root) return;
-  const { runs, all } = walkBacktest();
+  const { runs, all, skipped } = walkBacktest();
   const mae = (a, f) => a.length ? a.reduce((s, x) => s + Math.abs(x[f]), 0) / a.length : null;
   const bias = (a, f) => a.length ? a.reduce((s, x) => s + x[f], 0) / a.length : null;
   const n = v => v === null ? '–' : Math.round(v).toLocaleString();
@@ -3476,14 +3482,15 @@ function renderWalkAccuracy(){
   const small = all.length < 30 || runs.length < 3;
   let h = note + '<div style="font-size:13px; margin-bottom:8px;">' + all.length + ' paddock predictions from ' + runs.length + ' walk' + (runs.length > 1 ? 's' : '') + ', each using only the walks before it. Average miss in kg DM/ha (lower is better; bias + means the estimate ran too high):</div>';
   h += '<table style="border-collapse:collapse; width:100%; font-size:12px; font-family:\'IBM Plex Mono\',monospace; margin-bottom:10px;"><thead><tr style="text-align:left;"><th style="padding:4px 6px;">Method</th><th style="padding:4px 6px; text-align:right;">Miss</th><th style="padding:4px 6px; text-align:right;">Bias</th></tr></thead><tbody>'
-    + [['Each paddock\'s own rate (current)', 'eOwn'], ['Farm average rate for all', 'eAvg'], ['No growth (flat)', 'eFlat']].map(m => '<tr style="border-top:1px solid var(--line);"><td style="padding:5px 6px;">' + m[0] + '</td><td style="padding:5px 6px; text-align:right; font-weight:700;">±' + n(mae(all, m[1])) + '</td><td style="padding:5px 6px; text-align:right;">' + sg(bias(all, m[1])) + '</td></tr>').join('') + '</tbody></table>';
+    + [['Each paddock\'s own rate', 'eOwn'], ['Farm average rate for all (used)', 'eAvg'], ['No growth (flat)', 'eFlat']].map(m => '<tr style="border-top:1px solid var(--line);"><td style="padding:5px 6px;">' + m[0] + '</td><td style="padding:5px 6px; text-align:right; font-weight:700;">±' + n(mae(all, m[1])) + '</td><td style="padding:5px 6px; text-align:right;">' + sg(bias(all, m[1])) + '</td></tr>').join('') + '</tbody></table>';
   const mo = mae(all, 'eOwn'), ma = mae(all, 'eAvg');
   h += '<div style="font-size:13px; margin-bottom:10px;">' + (ma < mo - 5 ? 'The farm average rate did better than each paddock\'s own rate by about ' + n(mo - ma) + ' kg, so own-paddock rates look noisy.' : (mo < ma - 5 ? 'Each paddock\'s own rate did better than the farm average by about ' + n(ma - mo) + ' kg, so own-paddock rates are carrying real information.' : 'Own-paddock and farm-average rates did about the same.')) + '</div>';
   const bands = [['Under 2,200', x => x.start < 2200], ['2,200 – 2,800', x => x.start >= 2200 && x.start <= 2800], ['Over 2,800', x => x.start > 2800]];
-  h += '<div style="font-size:12px; font-weight:600; margin:10px 0 4px;">By starting cover (current method)</div><div style="font-family:\'IBM Plex Mono\',monospace; font-size:12px;">' + bands.map(b => { const a = all.filter(b[1]); return '<div style="display:flex; justify-content:space-between; padding:3px 0; border-top:1px solid var(--line);"><span>' + b[0] + ' (' + a.length + ')</span><span>' + (a.length ? '±' + n(mae(a, 'eOwn')) + ' · bias ' + sg(bias(a, 'eOwn')) : '–') + '</span></div>'; }).join('') + '</div>';
+  h += '<div style="font-size:12px; font-weight:600; margin:10px 0 4px;">By starting cover (farm average method)</div><div style="font-family:\'IBM Plex Mono\',monospace; font-size:12px;">' + bands.map(b => { const a = all.filter(b[1]); return '<div style="display:flex; justify-content:space-between; padding:3px 0; border-top:1px solid var(--line);"><span>' + b[0] + ' (' + a.length + ')</span><span>' + (a.length ? '±' + n(mae(a, 'eAvg')) + ' · bias ' + sg(bias(a, 'eAvg')) : '–') + '</span></div>'; }).join('') + '</div>';
   h += '<div style="font-size:12px; font-weight:600; margin:12px 0 4px;">By walk</div><div style="overflow-x:auto;"><table style="border-collapse:collapse; width:max-content; min-width:100%; font-size:11px; font-family:\'IBM Plex Mono\',monospace;"><thead><tr style="text-align:left;"><th style="padding:4px 6px;">Predicted walk</th><th style="padding:4px 6px;">Pads</th><th style="padding:4px 6px;">Days</th><th style="padding:4px 6px;">Rate</th><th style="padding:4px 6px;">Own</th><th style="padding:4px 6px;">Avg</th><th style="padding:4px 6px;">Flat</th><th style="padding:4px 6px;">Bias</th></tr></thead><tbody>'
     + runs.slice().reverse().map(r => '<tr style="border-top:1px solid var(--line);"><td style="padding:4px 6px; white-space:nowrap;">' + fmtShort(r.dc) + '</td><td style="padding:4px 6px;">' + r.rows.length + '</td><td style="padding:4px 6px;">' + Math.round(r.rows.reduce((s, x) => s + x.days, 0) / r.rows.length) + '</td><td style="padding:4px 6px;">' + Math.round(r.rate) + '</td><td style="padding:4px 6px;">±' + n(mae(r.rows, 'eOwn')) + '</td><td style="padding:4px 6px;">±' + n(mae(r.rows, 'eAvg')) + '</td><td style="padding:4px 6px;">±' + n(mae(r.rows, 'eFlat')) + '</td><td style="padding:4px 6px;">' + sg(bias(r.rows, 'eOwn')) + '</td></tr>').join('') + '</tbody></table></div>';
   h += '<div style="font-size:11px; color:var(--ink-soft); margin-top:8px;">Rate = farm average growth (kg DM/ha/day) measured from the two earlier walks. Days = average gap the prediction had to cover.</div>';
+  if(skipped) h += '<div style="font-size:11px; color:var(--ink-soft); margin-top:6px;">' + skipped + ' reading' + (skipped > 1 ? 's' : '') + ' under ' + WALK_MIN_COVER + ' kg DM/ha left out as likely glitches.</div>';
   if(small) h += '<div style="font-size:12px; color:var(--rust); margin-top:8px;">Small sample (' + all.length + ' predictions, ' + runs.length + ' walk' + (runs.length > 1 ? 's' : '') + ') — treat these as rough until more walks are in.</div>';
   root.innerHTML = h;
 }
@@ -3508,18 +3515,20 @@ function renderWalk(){
   // Growth: only paddocks measured on both walks and NOT grazed in between (per the diary),
   // so no intake assumption is needed — change in cover / days is the growth.
   const prevDate = dates[dates.indexOf(wd) + 1];
-  const growthBy = {}; let gSum = 0, gArea = 0, gDaysMin = null, gDaysMax = null, gTooClose = false;
+  let gSkip = 0; const growthBy = {}; let gSum = 0, gArea = 0, gDaysMin = null, gDaysMax = null, gTooClose = false;
   if(prevDate){
     const pw = walks[prevDate];
     Object.keys(w.paddocks).forEach(k => {
       const a = w.paddocks[k], b = pw.paddocks[k];
       if(!b || isExcludedOn(k, wd)) return;
+      if(!walkReadingOk(a.cover) || !walkReadingOk(b.cover)){ gSkip++; return; }
       const mNow = a.measured || wd, mPrev = b.measured || prevDate;
       const days = daysBetweenKeys(mPrev, mNow);
       if(days < 1) return;
       if(days < 3){ gTooClose = true; return; }
       if((idx[k] || []).some(d => d >= mPrev && d <= mNow)) return;
       const g = (a.cover - b.cover) / days;
+      if(Math.abs(g) > WALK_MAX_RATE){ gSkip++; return; }
       growthBy[k] = g; gSum += g * a.area; gArea += a.area;
       gDaysMin = gDaysMin === null ? days : Math.min(gDaysMin, days); gDaysMax = gDaysMax === null ? days : Math.max(gDaysMax, days);
     });
@@ -3529,7 +3538,7 @@ function renderWalk(){
     gBox.style.display = 'block';
     if(gArea > 0){
       document.getElementById('walkGrowthOut').textContent = Math.round(gSum / gArea) + ' kg DM/ha/day';
-      document.getElementById('walkGrowthSub').textContent = `${Object.keys(growthBy).length} ungrazed paddocks (${gArea.toFixed(1)} ha) · ${fmtShort(prevDate)} to ${fmtShort(wd)} · ${gDaysMin === gDaysMax ? gDaysMin : gDaysMin + '–' + gDaysMax} days`;
+      document.getElementById('walkGrowthSub').textContent = `${Object.keys(growthBy).length} ungrazed paddocks (${gArea.toFixed(1)} ha) · ${fmtShort(prevDate)} to ${fmtShort(wd)} · ${gDaysMin === gDaysMax ? gDaysMin : gDaysMin + '–' + gDaysMax} days` + (gSkip ? ` · ${gSkip} implausible reading${gSkip > 1 ? 's' : ''} left out` : '');
     } else {
       document.getElementById('walkGrowthOut').textContent = '–';
       document.getElementById('walkGrowthSub').textContent = gTooClose ? 'Walks are less than 3 days apart — too close to measure growth' : 'No paddocks were ungrazed and measured on both walks';
@@ -3546,16 +3555,16 @@ function renderWalk(){
     const before = gd.filter(d => d < measured);
     items.push({ k, p, measured, grazedOn: grazedAfter.length ? grazedAfter[grazedAfter.length-1] : null, lastBefore: before.length ? before[before.length-1] : null });
   });
-  // Cover estimate (newest walk only): measured cover + each paddock's own growth between the last two walks
-  // x days since it was measured (+ the day offset chosen). Paddocks without their own rate use the farm average.
+  // Cover estimate (newest walk only): measured cover + the farm-average growth between the last two walks
+  // x days since it was measured (+ the day offset chosen). 
   const isNewest = wd === dates[0];
   const fcstRow = document.getElementById('walkFcstRow');
   fcstRow.style.display = (isNewest && prevDate) ? '' : 'none';
   const off = parseInt(document.getElementById('walkFcstDays').value, 10) || 0;
   const avgG = gArea > 0 ? gSum / gArea : null;
   items.forEach(i => {
-    i.rate = growthBy[i.k] !== undefined ? growthBy[i.k] : avgG;
-    i.rateOwn = growthBy[i.k] !== undefined;
+    i.rate = avgG; // farm average: it beat each paddock's own rate in the accuracy check
+    i.rateOwn = false;
     const since = isNewest ? Math.max(0, daysBetweenKeys(i.measured, todayKeyReal())) : 0;
     i.estDays = since + off;
     i.est = (isNewest && prevDate && i.rate !== null) ? Math.max(0, i.p.cover + i.rate * i.estDays) : null;
