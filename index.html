@@ -311,7 +311,7 @@
         </div>
         <div class="calving-section" id="feedSection">
           <div id="feedOut" style="font-size:13px;"></div>
-          <div style="font-size:11px; color:var(--ink-soft); margin-top:8px;">Area × (walk cover − post-grazing target) ÷ cows. Uses the latest walk on or before this date. An estimate of feed on offer, not intake.</div>
+          <div style="font-size:11px; color:var(--ink-soft); margin-top:8px;">Area × (estimated cover − post-grazing target) ÷ cows. Cover is the latest walk reading grown forward to this date at the farm-average growth rate ("est."); a paddock grazed since it was measured keeps its measured cover. An estimate of feed on offer, not intake.</div>
         </div>
       </div>
     </div>
@@ -534,7 +534,7 @@
       <div class="card-head"><span class="dot a"></span><h2>Last 7 days grazing</h2><span class="chevron">▾</span></div>
       <div class="card-body">
         <div id="grazeWeekRoot"></div>
-        <div style="font-size:11px; color:var(--ink-soft); margin-top:8px;">Paddock and area (ha) for each break, AM then PM, with cows. Strip mobs show paddock, area (m²) and cows. Swipe sideways for earlier days.</div>
+        <div style="font-size:11px; color:var(--ink-soft); margin-top:8px;">Paddock and area (ha) for each break, AM then PM, with cows. Peno, OAD, New moms and Colostrum work the same way, with area in m². Swipe sideways for earlier days.</div>
       </div>
     </div>
     <div class="field" id="walkSelectWrap" style="margin-bottom:12px; display:none;"><label>Walk</label><select id="walkSelect" style="width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:15px;"></select></div>
@@ -781,6 +781,33 @@ const MAIN_MOBS = [ {id:'herd1', label:'Herd 1'}, {id:'herd2', label:'Herd 2'}, 
 const STRIP_MAIN_MOBS = [ {id:'peno', label:'PENO'}, {id:'oad', label:'OAD'} ];
 const STRIP_CALVING_MOBS = [ {id:'newMoms', label:'New Moms', optionalZero:true, hasCount:true}, {id:'colostrum', label:'Colostrum', hasCount:true} ];
 const ALL_STRIP_MOBS = STRIP_MAIN_MOBS.concat(STRIP_CALVING_MOBS);
+// Every group now records grazing the same way: AM/PM breaks made of paddock + area slots.
+// The four small groups (Peno, OAD, New moms, Colostrum) work in m² on screen; areas are always stored in ha.
+const SLOT_MOBS = MAIN_MOBS.concat(ALL_STRIP_MOBS);
+const ENTRY_COUNT_KEY = { newMoms:'newMomsCount', colostrum:'colostrumCount' };
+function isStripMob(id){ return id === 'peno' || id === 'oad' || id === 'newMoms' || id === 'colostrum'; }
+function slotMobLabel(id){ const m = SLOT_MOBS.find(x => x.id === id); return m ? m.label : id; }
+// slots saved on a day for one group: [{p, ha, sess}]. Days saved before this change kept the small groups
+// in `stripGrazers` (one paddock + m²); those are read as one slot so history stays intact.
+function entrySlots(e, mobId){
+  if(!e) return [];
+  const np = e.mobPaddocks && e.mobPaddocks[mobId];
+  if(np !== undefined || !isStripMob(mobId)){
+    const ps = normalizeSlotArray(np), hs = normalizeSlotArray(e.mobAreas && e.mobAreas[mobId]), ss = (e.mobSessions && e.mobSessions[mobId]) || [];
+    return ps.map((p, i) => ({ p, ha:hs[i] || 0, sess:ss[i] || null }));
+  }
+  const sg = e.stripGrazers && e.stripGrazers[mobId];
+  if(sg && ((sg.paddock !== null && sg.paddock !== undefined) || sg.plannedArea)) return [{ p:sg.paddock ?? null, ha:(sg.plannedArea || 0) / 10000, sess:null }];
+  return [];
+}
+function entryPads(e, mobId){ return entrySlots(e, mobId).filter(x => x.p !== null && x.p !== undefined); }
+function entryMobHa(e, mobId){ return entryPads(e, mobId).reduce((a, x) => a + (x.ha || 0), 0); }
+function entryCount(e, mobId){ return e ? e[ENTRY_COUNT_KEY[mobId] || mobId] : undefined; }
+function haToInput(mobId, ha){ return ha ? (isStripMob(mobId) ? Math.round(ha * 10000) : ha) : ''; }
+function inputToHa(mobId, raw){ if(!raw || !(raw > 0)) return null; return isStripMob(mobId) ? (Math.round(raw) / 10000 || null) : (r1(raw) || null); }
+function slotRound(mobId, v){ return isStripMob(mobId) ? Math.round(v * 10000) / 10000 : r1(v); }
+function fmtMobArea(mobId, ha){ return isStripMob(mobId) ? Math.round(ha * 10000).toLocaleString() + ' m²' : (Math.round(ha * 10) / 10) + ' ha'; }
+function fmtHaSmart(v){ return Math.abs(v) >= 1 ? v.toFixed(1) : v.toFixed(2); }
 
 function loadEntries(){ try{ const raw = localStorage.getItem(STORAGE_KEY); return raw ? JSON.parse(raw) : {}; }catch(e){ return {}; } }
 function saveEntries(entries){ entriesStamp++; localStorage.setItem(STORAGE_KEY, JSON.stringify(entries)); queueCloudPush(); }
@@ -955,7 +982,7 @@ function setLocalRecord(col, id, field, value){
     else if(id === 'cowflag'){ if(value === null) delete herd.flags[field]; else herd.flags[field] = value; }
     else if(id === 'sizes'){ if(value === null) delete paddockSizes[field]; else paddockSizes[field] = value; allocIdxStamp = -1; }
     else if(id === 'breaks'){
-      const m = field.match(/^(herd\d)_(am|pm)_(\d{4}-\d{2}-\d{2})$/); if(!m) return;
+      const m = field.match(/^([A-Za-z0-9]+)_(am|pm)_(\d{4}-\d{2}-\d{2})$/); if(!m) return;
       const ix = breakTargets.findIndex(b => b.mob === m[1] && b.session === m[2] && b.from === m[3]);
       if(value === null){ if(ix >= 0) breakTargets.splice(ix, 1); }
       else if(ix >= 0) breakTargets[ix].ha = value; else breakTargets.push({ mob:m[1], session:m[2], from:m[3], ha:value });
@@ -1147,9 +1174,9 @@ let kline = loadKline();
 let selectedWindDir = null, selectedWindStr = null;
 let mobSlotPaddock = {}, mobSlotHa = {}, mobSlotSession = {};
 let finishedToday = new Set(); // paddocks marked fully grazed today without changing any areas
-function blankSlots(mobId){ mobSlotPaddock[mobId] = [null, null]; mobSlotHa[mobId] = [null, null]; mobSlotSession[mobId] = ['am', 'pm']; }
-MAIN_MOBS.forEach(m => blankSlots(m.id));
-let stripState = {}; ALL_STRIP_MOBS.forEach(m => stripState[m.id] = { paddock:null, plannedArea:null, count:null, pendingActual:null });
+function blankSlots(mobId){ if(isStripMob(mobId)){ mobSlotPaddock[mobId] = [null]; mobSlotHa[mobId] = [null]; mobSlotSession[mobId] = ['am']; return; } mobSlotPaddock[mobId] = [null, null]; mobSlotHa[mobId] = [null, null]; mobSlotSession[mobId] = ['am', 'pm']; }
+SLOT_MOBS.forEach(m => blankSlots(m.id));
+let stripState = {}; ALL_STRIP_MOBS.forEach(m => stripState[m.id] = { count:null });
 let modalCurrentKey = null;
 let pod1Action = null, pod3Action = null, pod1Selected = null, pod3Selected = null;
 let selectedDateKey = todayKeyReal();
@@ -1239,7 +1266,7 @@ function applyHerdToForm(){
   const set = (id, v) => { document.getElementById(id).value = v || ''; };
   set('herd1', c.herd1); set('herd2', c.herd2); set('herd3', c.herd3); set('oadField', c.oad); set('penoField', c.peno);
   stripState.newMoms.count = c.newMoms || null; stripState.colostrum.count = c.colostrum || null;
-  setStripUIFromState('newMoms'); setStripUIFromState('colostrum');
+  setStripCountUI('newMoms'); setStripCountUI('colostrum');
   updateSolidsPerCow(); updateGrazingTotals();
 }
 function herdChanged(){
@@ -1998,11 +2025,7 @@ function getAllocIndex(){
   const add = (p, d, ha) => { if(p === null || p === undefined || p === '' || !(ha > 0)) return; const k = pk(p); (idx[k] = idx[k] || []); const a = idx[k]; if(a.length && a[a.length-1][0] === d) a[a.length-1][1] += ha; else a.push([d, ha]); };
   Object.keys(entries).sort().forEach(d => {
     const e = entries[d];
-    MAIN_MOBS.forEach(m => {
-      const ps = normalizeSlotArray(e.mobPaddocks && e.mobPaddocks[m.id]), hs = normalizeSlotArray(e.mobAreas && e.mobAreas[m.id]);
-      ps.forEach((p, i) => add(p, d, hs[i] || 0));
-    });
-    ALL_STRIP_MOBS.forEach(m => { const sg = e.stripGrazers && e.stripGrazers[m.id]; if(sg) add(sg.paddock, d, (sg.plannedArea || 0) / 10000); });
+    SLOT_MOBS.forEach(m => entrySlots(e, m.id).forEach(x => add(x.p, d, x.ha || 0)));
     (Array.isArray(e.finished) ? e.finished : []).forEach(k => { const key = pk(k); (idx[key] = idx[key] || []); const a = idx[key]; if(a.length && a[a.length-1][0] === d) a[a.length-1][2] = true; else a.push([d, 0, true]); });
   });
   allocIdx = idx; allocIdxStamp = entriesStamp;
@@ -2023,8 +2046,7 @@ function usedBefore(key, dateKey){
 // area of this paddock already given to other slots on the day being edited (any herd, strip mobs too)
 function liveAllocElse(key, exMob, exIdx){
   let ha = 0;
-  MAIN_MOBS.forEach(m => mobSlotPaddock[m.id].forEach((p, i) => { if(m.id === exMob && i === exIdx) return; if(p !== null && p !== undefined && pk(p) === key) ha += mobSlotHa[m.id][i] || 0; }));
-  ALL_STRIP_MOBS.forEach(m => { const st = stripState[m.id]; if(st && st.paddock !== null && st.paddock !== undefined && pk(st.paddock) === key) ha += (st.plannedArea || 0) / 10000; });
+  SLOT_MOBS.forEach(m => mobSlotPaddock[m.id].forEach((p, i) => { if(m.id === exMob && i === exIdx) return; if(p !== null && p !== undefined && pk(p) === key) ha += mobSlotHa[m.id][i] || 0; }));
   return ha;
 }
 function padStatus(mobId, s){
@@ -2041,13 +2063,20 @@ function breakTargetOn(mobId, session, dateKey){
   return best && best.ha > 0 ? best : null;
 }
 // herd size: today's count if entered, otherwise the most recent earlier day that has one
+function mobCountValue(mobId){
+  if(mobId === 'oad') return parseFloat(document.getElementById('oadField').value) || 0;
+  if(mobId === 'peno') return parseFloat(document.getElementById('penoField').value) || 0;
+  if(mobId === 'newMoms' || mobId === 'colostrum') return (stripState[mobId] && stripState[mobId].count) || 0;
+  const el = document.getElementById(mobId); return el ? (parseFloat(el.value) || 0) : 0;
+}
 function cowsForMob(mobId){
-  const v = parseFloat(document.getElementById(mobId).value) || 0;
+  const v = mobCountValue(mobId);
   if(v > 0) return { n:v, src:null };
   let cur = selectedDateKey;
-  for(let i = 0; i < 14; i++){ cur = keyOffsetFrom(cur, -1); const e = entries[cur]; if(e && e[mobId] > 0) return { n:e[mobId], src:cur }; }
+  for(let i = 0; i < 14; i++){ cur = keyOffsetFrom(cur, -1); const e = entries[cur]; const c = entryCount(e, mobId); if(e && c > 0) return { n:c, src:cur }; }
   return null;
 }
+function pmShown(mobId){ return !isStripMob(mobId) || sessionSlots(mobId, 'pm').some(s => (mobSlotPaddock[mobId][s] !== null && mobSlotPaddock[mobId][s] !== undefined) || mobSlotHa[mobId][s]); }
 function sessionSlots(mobId, sess){ const out = []; mobSlotPaddock[mobId].forEach((_, s) => { if(slotSession(mobId, s) === sess) out.push(s); }); return out; }
 function updateBreakInfo(mobId){
   const c = cowsForMob(mobId);
@@ -2060,8 +2089,9 @@ function updateBreakInfo(mobId){
       let txt = '', over = false;
       if(t){
         const left = t.ha - used;
-        txt = `target ${t.ha} ha · used ${used.toFixed(1)} · ` + (left > 0.04 ? `${left.toFixed(1)} left` : left < -0.04 ? `over by ${(-left).toFixed(1)}` : 'full');
-        over = left < -0.04;
+        const tol0 = isStripMob(mobId) ? 0.0005 : 0.04;
+        txt = `target ${fmtMobArea(mobId, t.ha)} · used ${fmtMobArea(mobId, used)} · ` + (left > tol0 ? `${fmtMobArea(mobId, left)} left` : left < -tol0 ? `over by ${fmtMobArea(mobId, -left)}` : 'full');
+        over = left < -tol0;
       } else if(sess) txt = 'no break size set (Settings)';
       if(c && used > 0) txt += (txt ? ' · ' : '') + `${Math.round(c.n)} cows${c.src ? ' (from ' + fmtShort(c.src) + ')' : ''} = ${Math.round(c.n / used)}/ha`;
       el.textContent = txt; el.style.color = over ? 'var(--rust)' : 'var(--ink-soft)';
@@ -2075,19 +2105,19 @@ function updateBreakInfo(mobId){
         else {
           const tol = padTol(st.size), p = mobSlotPaddock[mobId][s];
           let t = `P${p} · ${st.size.toFixed(1)} ha`;
-          if(st.before > 0.04) t += ` · ${st.before.toFixed(1)} grazed earlier`;
-          if(st.others > 0.04) t += ` · ${st.others.toFixed(1)} in other breaks today`;
+          if(st.before > 0.004) t += ` · ${fmtHaSmart(st.before)} ha grazed earlier`;
+          if(st.others > 0.004) t += ` · ${fmtHaSmart(st.others)} ha in other breaks today`;
           let tail = '', col = 'var(--ink-soft)', btnHtml = '';
           if(st.finished){
             tail = ' · ✓ marked fully grazed (areas unchanged)'; col = 'var(--green)';
             btnHtml = ` <button data-unfinish-pad="${mobId}-${s}" style="border:1px solid var(--line); background:#fff; color:var(--ink-soft); border-radius:6px; font-size:11px; padding:2px 8px; cursor:pointer;">Undo</button>`;
           } else if(st.thisHa > 0){
             if(st.leftAfter > tol){
-              tail = ` · ${st.leftAfter.toFixed(1)} ha left after`;
+              tail = ` · ${fmtHaSmart(st.leftAfter)} ha left after`;
               if(st.leftAfter <= st.size * 0.10) btnHtml = ` <button data-finish-pad="${mobId}-${s}" style="border:1px solid var(--green); background:#fff; color:var(--green); border-radius:6px; font-size:11px; padding:2px 8px; cursor:pointer;">Mark finished</button>`;
             }
             else if(st.leftAfter >= -tol){ tail = ' · ✓ fully grazed with this break'; col = 'var(--green)'; }
-            else { tail = ` · over by ${(-st.leftAfter).toFixed(1)} ha — only ${Math.max(0, st.maxHere).toFixed(1)} left`; col = 'var(--rust)'; btnHtml = ` <button data-fix-pad="${mobId}-${s}" style="border:1px solid var(--rust); background:#fff; color:var(--rust); border-radius:6px; font-size:11px; padding:2px 8px; cursor:pointer;">Set to ${Math.max(0, st.maxHere).toFixed(1)}</button>`; }
+            else { tail = ` · over by ${fmtHaSmart(-st.leftAfter)} ha — only ${fmtHaSmart(Math.max(0, st.maxHere))} left`; col = 'var(--rust)'; btnHtml = ` <button data-fix-pad="${mobId}-${s}" style="border:1px solid var(--rust); background:#fff; color:var(--rust); border-radius:6px; font-size:11px; padding:2px 8px; cursor:pointer;">Set to ${Math.max(0, st.maxHere).toFixed(1)}</button>`; }
           } else if(st.completedOn && st.before === 0 && daysBetweenKeys(st.completedOn, selectedDateKey) <= 10) tail = ` · fully grazed on ${fmtShort(st.completedOn)}`;
           pEl.style.color = col; pEl.innerHTML = escapeHtml(t + tail) + btnHtml;
           const fin = pEl.querySelector('[data-finish-pad]');
@@ -2096,9 +2126,9 @@ function updateBreakInfo(mobId){
           if(unfin) unfin.addEventListener('click', () => { finishedToday.delete(st.key); updateAllBreakInfo(); formTouched = true; scheduleAutosave(); });
           const fix = pEl.querySelector('[data-fix-pad]');
           if(fix) fix.addEventListener('click', () => {
-            const v = r1(Math.max(0, st.maxHere));
+            const v = slotRound(mobId, Math.max(0, st.maxHere));
             mobSlotHa[mobId][s] = v || null;
-            const hi = document.querySelector(`[data-mslot-ha="${mobId}-${s}"]`); if(hi) hi.value = v || '';
+            const hi = document.querySelector(`[data-mslot-ha="${mobId}-${s}"]`); if(hi) hi.value = haToInput(mobId, v);
             updateMobChips(mobId); updateGrazingTotals(); formTouched = true; scheduleAutosave();
           });
         }
@@ -2108,8 +2138,8 @@ function updateBreakInfo(mobId){
     });
   });
 }
-function updateAllBreakInfo(){ MAIN_MOBS.forEach(m => { updateBreakInfo(m.id); updateMobChips(m.id); }); }
-['herd1', 'herd2', 'herd3'].forEach(id => { const el = document.getElementById(id); if(el) el.addEventListener('input', () => { try{ updateAllBreakInfo(); }catch(e){} }); });
+function updateAllBreakInfo(){ SLOT_MOBS.forEach(m => { updateBreakInfo(m.id); updateMobChips(m.id); }); }
+['herd1', 'herd2', 'herd3', 'oadField', 'penoField'].forEach(id => { const el = document.getElementById(id); if(el) el.addEventListener('input', () => { try{ updateAllBreakInfo(); }catch(e){} }); });
 function buildMainMobRow(mob){
   const row = document.createElement('div'); row.className = 'mob-row'; row.dataset.mob = mob.id;
   row.innerHTML = `
@@ -2119,9 +2149,14 @@ function buildMainMobRow(mob){
       <span class="mob-chips" data-chips="${mob.id}">No paddocks</span>
     </div>
     <div class="mob-row-body">
+      ${mob.hasCount ? `<div class="field-row"><div class="field"><label>Headcount</label><input type="number" data-strip-count="${mob.id}" inputmode="numeric"></div></div>` : ''}
       <div data-slots-container="${mob.id}"></div>
     </div>`;
   row.querySelector('.mob-row-head').addEventListener('click', () => row.classList.toggle('open'));
+  if(mob.hasCount) row.querySelector(`[data-strip-count="${mob.id}"]`).addEventListener('input', (e) => {
+    stripState[mob.id].count = parseFloat(e.target.value) || null;
+    updateMobChips(mob.id); updateBreakInfo(mob.id); formTouched = true; scheduleAutosave();
+  });
   renderMobSlots(mob.id);
   return row;
 }
@@ -2178,7 +2213,8 @@ function renderMobSlots(mobId){
   container.innerHTML = '<div style="font-size:11px; color:var(--ink-soft); margin-bottom:8px;">Amber outline = partly grazed, still has area left.</div>';
   const groups = [];
   if(mobSlotPaddock[mobId].some((_, s) => !slotSession(mobId, s))) groups.push({ key:null, label:'Earlier entry (no AM/PM)' });
-  groups.push({ key:'am', label:'AM' }, { key:'pm', label:'PM' });
+  groups.push({ key:'am', label:isStripMob(mobId) ? 'Fed once a day' : 'AM' });
+  if(pmShown(mobId)) groups.push({ key:'pm', label:'PM' }); // small groups are fed once a day; PM only shows if an earlier entry has one
   groups.forEach((g, gi) => {
     const wrap = document.createElement('div');
     wrap.style.cssText = gi > 0 ? 'margin-top:14px; padding-top:12px; border-top:2px solid var(--line);' : '';
@@ -2198,7 +2234,7 @@ function renderMobSlots(mobId){
         </div>
         <div class="top-cover" data-top-for="mslot:${mobId}-${s}"></div>
         <div class="paddock-grid" data-mslot-grid="${mobId}-${s}" style="margin-bottom:8px;"></div>
-        <div class="field"><label>Area (ha, 1 decimal)</label><input type="number" data-mslot-ha="${mobId}-${s}" step="0.1" inputmode="decimal"></div>
+        <div class="field"><label>${isStripMob(mobId) ? 'Area (m²)' : 'Area (ha, 1 decimal)'}</label><input type="number" data-mslot-ha="${mobId}-${s}" step="${isStripMob(mobId) ? 10 : 0.1}" inputmode="${isStripMob(mobId) ? 'numeric' : 'decimal'}"></div>
         <div data-slot-cows="${mobId}-${s}" style="font-size:12px; color:var(--green); font-weight:600; margin-top:-4px;"></div>
         <div data-slot-pad="${mobId}-${s}" style="font-size:12px; margin-top:4px;"></div>`;
       slotsEl.appendChild(slot);
@@ -2224,8 +2260,8 @@ function renderMobSlots(mobId){
               let rem = t.ha - others;
               const ps = padStatus(mobId, s);
               if(ps && ps.size) rem = Math.min(rem, ps.maxHere); // never hand out more than the paddock has left
-              rem = r1(rem);
-              if(rem > 0){ mobSlotHa[mobId][s] = rem; haInput.value = rem; }
+              rem = slotRound(mobId, rem);
+              if(rem > 0){ mobSlotHa[mobId][s] = rem; haInput.value = haToInput(mobId, rem); }
             }
           }
           updateMobChips(mobId); updateGrazingTotals();
@@ -2233,14 +2269,14 @@ function renderMobSlots(mobId){
         });
         grid.appendChild(btn);
       });
-      haInput.value = mobSlotHa[mobId][s] ?? '';
+      haInput.value = haToInput(mobId, mobSlotHa[mobId][s]);
       haInput.addEventListener('input', (e) => {
         const raw = parseFloat(e.target.value);
-        mobSlotHa[mobId][s] = raw ? r1(raw) || null : null;
+        mobSlotHa[mobId][s] = inputToHa(mobId, raw);
         updateMobChips(mobId); updateGrazingTotals();
         formTouched = true; scheduleAutosave();
       });
-      haInput.addEventListener('change', () => { if(mobSlotHa[mobId][s]) haInput.value = mobSlotHa[mobId][s]; });
+      haInput.addEventListener('change', () => { if(mobSlotHa[mobId][s]) haInput.value = haToInput(mobId, mobSlotHa[mobId][s]); });
       if(n > 0){
         slot.querySelector(`[data-remove-slot="${mobId}-${s}"]`).addEventListener('click', () => {
           mobSlotPaddock[mobId].splice(s, 1); mobSlotHa[mobId].splice(s, 1); mobSlotSession[mobId].splice(s, 1);
@@ -2271,13 +2307,13 @@ function updateMobChips(mobId){
   const any = pads.some(p => p !== null && p !== undefined);
   const totEl = document.querySelector(`[data-mobtotal="${mobId}"]`);
   const tot = pads.reduce((a, p, s) => a + ((p !== null && p !== undefined && has[s]) ? has[s] : 0), 0);
-  if(totEl) totEl.textContent = tot > 0 ? (Math.round(tot * 10) / 10) + ' ha' : '';
+  if(totEl) totEl.textContent = tot > 0 ? fmtMobArea(mobId, tot) : '';
   if(!any){ chipsEl.textContent = 'No paddocks'; return; }
   const line = (label, idxs) => {
     const filled = idxs.filter(s => pads[s] !== null && pads[s] !== undefined);
     const used = filled.reduce((a, s) => a + (has[s] || 0), 0), withHa = filled.filter(s => has[s] > 0).length;
     const parts = filled.map(s => {
-      let t = 'P' + pads[s] + (has[s] ? ' ' + has[s] + ' ha' : '');
+      let t = 'P' + pads[s] + (has[s] ? ' ' + fmtMobArea(mobId, has[s]) : '');
       if(c && c.n > 0){ const n = (withHa >= 2 && has[s] > 0 && used > 0) ? c.n * has[s] / used : (filled.length === 1 ? c.n : null); if(n !== null) t += ' · ' + Math.round(n) + ' cows'; }
       return escapeHtml(t);
     });
@@ -2287,7 +2323,7 @@ function updateMobChips(mobId){
   let html = '';
   const early = pads.map((_, s) => s).filter(s => !slotSession(mobId, s));
   if(early.some(s => pads[s] !== null && pads[s] !== undefined)) html += line('', early);
-  html += line('AM', sessionSlots(mobId, 'am')) + line('PM', sessionSlots(mobId, 'pm'));
+  html += line(isStripMob(mobId) ? '' : 'AM', sessionSlots(mobId, 'am')) + (pmShown(mobId) ? line('PM', sessionSlots(mobId, 'pm')) : '');
   chipsEl.innerHTML = html;
 }
 function setMainSlotGridState(mobId){
@@ -2296,131 +2332,18 @@ function setMainSlotGridState(mobId){
 const mainMobRowsEl = document.getElementById('mainMobRows');
 MAIN_MOBS.forEach(m => mainMobRowsEl.appendChild(buildMainMobRow(m)));
 
-// ---------- STRIP GRAZER WIDGETS ----------
-function computePrevStripEntry(mobId, beforeDateKey){
-  let cursor = beforeDateKey;
-  for(let i=0; i<400; i++){
-    cursor = keyOffsetFrom(cursor, -1);
-    const e = entries[cursor];
-    if(e && e.stripGrazers && e.stripGrazers[mobId] && e.stripGrazers[mobId].paddock !== null && e.stripGrazers[mobId].paddock !== undefined){
-      return { dateKey: cursor, data: e.stripGrazers[mobId] };
-    }
-  }
-  return null;
-}
-function computeTallyAndCount(mobId, paddock, beforeDateKeyInclusive){
-  let total = 0, count = 0, cursor = keyOffsetFrom(beforeDateKeyInclusive, 1);
-  for(let i=0; i<400; i++){
-    cursor = keyOffsetFrom(cursor, -1);
-    const e = entries[cursor];
-    if(!e || !e.stripGrazers || !e.stripGrazers[mobId]) break;
-    const sg = e.stripGrazers[mobId];
-    if(sg.paddock !== paddock) break;
-    total += (sg.plannedArea || 0); count += 1;
-  }
-  return { total, count };
-}
-function buildStripWidget(mob){
-  const wrap = document.createElement('div'); wrap.className = 'mob-row'; wrap.dataset.mob = mob.id;
-  wrap.innerHTML = `
-    <div class="mob-row-head">
-      <span class="mob-name">${mob.label}</span>
-      <span class="mob-chips" data-strip-summary="${mob.id}">Not set</span>
-    </div>
-    <div class="mob-row-body">
-      ${mob.hasCount ? `<div class="field-row"><div class="field"><label>Headcount</label><input type="number" data-strip-count="${mob.id}" inputmode="numeric"></div></div>` : ''}
-      <div class="top-cover" data-top-for="strip:${mob.id}"></div>
-      <div class="paddock-grid" data-strip-grid="${mob.id}" style="margin-bottom:10px;"></div>
-      <div class="field-row" style="margin-bottom:0;">
-        <div class="field"><label>Planned area (m²)</label><input type="number" data-strip-area="${mob.id}" inputmode="numeric" placeholder="${mob.optionalZero ? '0' : ''}"></div>
-      </div>
-      <div class="strip-tally" data-strip-tally="${mob.id}" style="display:none;"></div>
-      <div class="strip-variance" data-strip-variance="${mob.id}" style="display:none;"></div>
-    </div>`;
-  wrap.querySelector('.mob-row-head').addEventListener('click', () => wrap.classList.toggle('open'));
-  const grid = wrap.querySelector(`[data-strip-grid="${mob.id}"]`);
-  PADDOCKS.forEach(p => {
-    const btn = document.createElement('div'); btn.className = 'paddock-btn'; btn.textContent = p;
-    btn.addEventListener('click', () => {
-      Array.from(grid.children).forEach(b => b.classList.remove('active-g'));
-      btn.classList.add('active-g'); stripState[mob.id].paddock = p;
-      refreshStripTally(mob.id); updateGrazingTotals();
-    });
-    grid.appendChild(btn);
-  });
-  wrap.querySelector(`[data-strip-area="${mob.id}"]`).addEventListener('input', (e) => {
-    stripState[mob.id].plannedArea = parseFloat(e.target.value) || 0;
-    refreshStripTally(mob.id); updateGrazingTotals();
-  });
-  if(mob.hasCount){
-    wrap.querySelector(`[data-strip-count="${mob.id}"]`).addEventListener('input', (e) => {
-      stripState[mob.id].count = parseFloat(e.target.value) || null;
-      updateStripSummary(mob.id);
-    });
-  }
-  return wrap;
-}
-function updateStripSummary(mobId){
+// ---------- SMALL GROUPS (Peno, OAD, New moms, Colostrum) ----------
+// They use the same AM/PM paddock + area rows as the herds above; only the headcount box and the m² unit differ.
+function setStripCountUI(mobId){
   const st = stripState[mobId];
-  const el = document.querySelector(`[data-strip-summary="${mobId}"]`);
-  if(!el) return;
-  const parts = [];
-  if(st.paddock !== null) parts.push('Paddock ' + st.paddock);
-  if(st.count !== null && st.count !== undefined) parts.push(st.count + ' cows');
-  el.textContent = parts.length ? parts.join(' · ') : 'Not set';
-}
-function setStripUIFromState(mobId){
-  const st = stripState[mobId];
-  const grid = document.querySelector(`[data-strip-grid="${mobId}"]`);
-  if(grid) Array.from(grid.children).forEach(b => b.classList.toggle('active-g', st.paddock !== null && String(b.textContent) === String(st.paddock)));
-  const areaInput = document.querySelector(`[data-strip-area="${mobId}"]`);
-  if(areaInput) areaInput.value = st.plannedArea ?? '';
   const countInput = document.querySelector(`[data-strip-count="${mobId}"]`);
   if(countInput) countInput.value = st.count ?? '';
-  updateStripSummary(mobId);
-}
-function refreshStripTally(mobId){
-  const st = stripState[mobId];
-  const tallyEl = document.querySelector(`[data-strip-tally="${mobId}"]`);
-  const varEl = document.querySelector(`[data-strip-variance="${mobId}"]`);
-  updateStripSummary(mobId);
-  if(st.paddock === null){ tallyEl.style.display='none'; varEl.style.display='none'; return; }
-  const prev = computePrevStripEntry(mobId, selectedDateKey);
-  if(prev && prev.data.paddock !== st.paddock){
-    const stay = computeTallyAndCount(mobId, prev.data.paddock, prev.dateKey);
-    tallyEl.style.display = 'block';
-    tallyEl.textContent = `Day 1 on paddock ${st.paddock} (planned so far: ${(st.plannedArea||0)} m²)`;
-    varEl.style.display = 'block';
-    varEl.innerHTML = `Paddock ${prev.data.paddock} closed out — ${stay.count} day(s), ${stay.total} m² planned.<br>
-      <label style="display:block; margin-top:6px; font-size:11px;">Actual area of paddock ${prev.data.paddock} (ha):</label>
-      <input type="number" step="0.01" data-actual-area="${mobId}" style="width:100%; margin-top:4px; padding:8px; border:1px solid var(--line); border-radius:6px; font-family:'IBM Plex Mono',monospace;">
-      <div data-variance-result="${mobId}" style="margin-top:6px;"></div>`;
-    const actualInput = varEl.querySelector(`[data-actual-area="${mobId}"]`);
-    if(st.pendingActual !== null && st.pendingActual !== undefined) actualInput.value = st.pendingActual;
-    actualInput.addEventListener('input', (e) => {
-      st.pendingActual = parseFloat(e.target.value) || null;
-      const resultEl = varEl.querySelector(`[data-variance-result="${mobId}"]`);
-      if(st.pendingActual !== null){
-        const plannedHa = stay.total / 10000;
-        const diff = st.pendingActual - plannedHa;
-        const pct = plannedHa > 0 ? ((diff/plannedHa)*100).toFixed(1) : '–';
-        resultEl.innerHTML = `<strong>Variance: ${diff >= 0 ? '+' : ''}${diff.toFixed(3)} ha (${pct}%)</strong> — ${diff >= 0 ? 'grazed more than planned' : 'grazed less than planned'}`;
-      } else { resultEl.innerHTML = ''; }
-      scheduleAutosave();
-    });
-  } else {
-    const tally = computeTallyAndCount(mobId, st.paddock, keyOffsetFrom(selectedDateKey, -1));
-    const dayNum = tally.count + 1;
-    const runningTotal = tally.total + (st.plannedArea || 0);
-    tallyEl.style.display = 'block';
-    tallyEl.textContent = `Day ${dayNum} on paddock ${st.paddock} · running total: ${runningTotal} m²`;
-    varEl.style.display = 'none';
-  }
+  updateMobChips(mobId); updateBreakInfo(mobId);
 }
 const stripMainRowsEl = document.getElementById('stripMainRows');
-STRIP_MAIN_MOBS.forEach(m => stripMainRowsEl.appendChild(buildStripWidget(m)));
+STRIP_MAIN_MOBS.forEach(m => stripMainRowsEl.appendChild(buildMainMobRow(m)));
 const calvingStripRowsEl = document.getElementById('calvingStripRows');
-STRIP_CALVING_MOBS.forEach(m => calvingStripRowsEl.appendChild(buildStripWidget(m)));
+STRIP_CALVING_MOBS.forEach(m => calvingStripRowsEl.appendChild(buildMainMobRow(m)));
 document.getElementById('calvingToggle').addEventListener('click', () => {
   document.getElementById('calvingSection').classList.toggle('open');
   document.getElementById('calvingChevron').textContent = document.getElementById('calvingSection').classList.contains('open') ? '▴' : '▾';
@@ -2477,8 +2400,8 @@ document.getElementById('daPullBtn').addEventListener('click', async () => {
     document.getElementById('penoField').value = d.peno;
     stripState.newMoms.count = d.newMoms;
     stripState.colostrum.count = d.colostrumMob;
-    setStripUIFromState('newMoms');
-    setStripUIFromState('colostrum');
+    setStripCountUI('newMoms');
+    setStripCountUI('colostrum');
     formTouched = true;
     scheduleAutosave();
     updateSolidsPerCow(); updateGrazingTotals();
@@ -2559,8 +2482,7 @@ function dailyTotalAreaOn(k){
   const e = entries[k];
   if(!e) return null;
   let total = 0, any = false;
-  MAIN_MOBS.forEach(m => { normalizeSlotArray(e.mobAreas && e.mobAreas[m.id]).forEach(v => { if(v){ total += v; any = true; } }); });
-  ALL_STRIP_MOBS.forEach(m => { const sg = e.stripGrazers && e.stripGrazers[m.id]; if(sg && sg.plannedArea){ total += sg.plannedArea/10000; any = true; } });
+  SLOT_MOBS.forEach(m => entryPads(e, m.id).forEach(x => { if(x.ha){ total += x.ha; any = true; } }));
   return any ? total : null;
 }
 function renderRoundTotals(){
@@ -2592,11 +2514,11 @@ function buildBossSummary(){
   if((e.herd3||0) > 0 || mobHa('herd3') > 0){
     lines.push(`Mob 3: ${e.herd3||0} - ${mobHa('herd3').toFixed(2)}ha`);
   }
-  const colArea = ((e.stripGrazers && e.stripGrazers.colostrum && e.stripGrazers.colostrum.plannedArea) || 0) / 10000;
+  const colArea = entryMobHa(e, 'colostrum');
   lines.push(`Colostrums: ${e.colostrumCount||0} cows (${colArea.toFixed(2)}ha used for day)`);
-  const oadHa = ((e.stripGrazers && e.stripGrazers.oad && e.stripGrazers.oad.plannedArea) || 0) / 10000;
+  const oadHa = entryMobHa(e, 'oad');
   lines.push(`Oad: ${e.oad||0} ${oadHa.toFixed(2)}ha`);
-  const penoHa = ((e.stripGrazers && e.stripGrazers.peno && e.stripGrazers.peno.plannedArea) || 0) / 10000;
+  const penoHa = entryMobHa(e, 'peno');
   lines.push(`Penos: ${e.peno||0} cows ${penoHa.toFixed(2)}ha`);
   lines.push(`New Mums: ${e.newMomsCount||0} cows`);
   const usedOut = document.getElementById('roundUsedOut').textContent;
@@ -2617,8 +2539,7 @@ document.getElementById('bossCopyBtn').addEventListener('click', async () => {
 // ---------- GRAZING TOTALS / ROUND LENGTH ----------
 function updateGrazingTotals(){
   let totalHa = 0;
-  MAIN_MOBS.forEach(m => { mobSlotHa[m.id].forEach(v => { totalHa += (v || 0); }); });
-  ALL_STRIP_MOBS.forEach(m => { totalHa += (stripState[m.id].plannedArea || 0) / 10000; });
+  SLOT_MOBS.forEach(m => { mobSlotHa[m.id].forEach(v => { totalHa += (v || 0); }); });
   document.getElementById('totalAreaOut').textContent = totalHa.toFixed(2) + ' ha';
   const rl = document.getElementById('roundLengthOut');
   const roundHa = inRoundHa(selectedDateKey);
@@ -2640,13 +2561,8 @@ function resetFormBlank(){
   document.querySelectorAll('#windDirGroup .toggle-btn, #windStrGroup .toggle-btn').forEach(b => b.classList.remove('active-b'));
   selectedWindDir = null; selectedWindStr = null;
   finishedToday = new Set();
-  MAIN_MOBS.forEach(m => { blankSlots(m.id); setMainSlotGridState(m.id); });
-  ALL_STRIP_MOBS.forEach(m => {
-    stripState[m.id] = { paddock:null, plannedArea:null, count:null, pendingActual:null };
-    setStripUIFromState(m.id);
-    const tallyEl = document.querySelector(`[data-strip-tally="${m.id}"]`); if(tallyEl) tallyEl.style.display='none';
-    const varEl = document.querySelector(`[data-strip-variance="${m.id}"]`); if(varEl) varEl.style.display='none';
-  });
+  SLOT_MOBS.forEach(m => { blankSlots(m.id); setMainSlotGridState(m.id); });
+  ALL_STRIP_MOBS.forEach(m => { stripState[m.id] = { count:null }; setStripCountUI(m.id); });
 }
 function loadDateIntoForm(){
   formTouched = false;
@@ -2680,7 +2596,13 @@ function loadDateIntoForm(){
     }
     if(e.windDir){ selectedWindDir = e.windDir; document.querySelectorAll('#windDirGroup .toggle-btn').forEach(b => { if(b.dataset.val === e.windDir) b.classList.add('active-b'); }); }
     if(e.windStr){ selectedWindStr = e.windStr; document.querySelectorAll('#windStrGroup .toggle-btn').forEach(b => { if(b.dataset.val === e.windStr) b.classList.add('active-b'); }); }
-    MAIN_MOBS.forEach(m => {
+    SLOT_MOBS.forEach(m => {
+      const legacy = isStripMob(m.id) && !(e.mobPaddocks && e.mobPaddocks[m.id] !== undefined);
+      if(legacy){ // a small-group day saved before AM/PM rows existed: one paddock, area in m²
+        const sl = entrySlots(e, m.id);
+        mobSlotPaddock[m.id] = sl.length ? sl.map(x => x.p) : [null, null]; mobSlotHa[m.id] = sl.length ? sl.map(x => x.ha || null) : [null, null];
+        mobSlotSession[m.id] = sl.length ? sl.map(() => null) : ['am', 'pm']; setMainSlotGridState(m.id); return;
+      }
       mobSlotPaddock[m.id] = normalizeSlotArray(e.mobPaddocks && e.mobPaddocks[m.id]);
       mobSlotHa[m.id] = normalizeSlotArray(e.mobAreas && e.mobAreas[m.id]);
       const ss = e.mobSessions && e.mobSessions[m.id];
@@ -2695,20 +2617,13 @@ function loadDateIntoForm(){
     ALL_STRIP_MOBS.forEach(m => {
       if(m.id === 'newMoms' && e.newMomsCount !== undefined) stripState[m.id].count = e.newMomsCount;
       if(m.id === 'colostrum' && e.colostrumCount !== undefined) stripState[m.id].count = e.colostrumCount;
-      if(e.stripGrazers && e.stripGrazers[m.id]){
-        const sg = e.stripGrazers[m.id];
-        stripState[m.id].paddock = sg.paddock ?? null;
-        stripState[m.id].plannedArea = sg.plannedArea ?? null;
-        if(sg.closedStay && sg.closedStay.actualAreaHa !== undefined) stripState[m.id].pendingActual = sg.closedStay.actualAreaHa;
-      }
-      setStripUIFromState(m.id);
+      setStripCountUI(m.id);
     });
   } else {
     // Intentionally left blank — a new day starts with nothing prefilled.
     // Prepopulation was removed: it was creating confusing chains of guessed
     // values that could get mistaken for real entered data.
   }
-  ALL_STRIP_MOBS.forEach(m => refreshStripTally(m.id));
   renderSupp();
   applyHerdToForm();
   refreshTopStrips();
@@ -2724,24 +2639,9 @@ function persistCurrentEntry(){
   const key = selectedDateKey;
   if(!formTouched && !entries[key]) return; // nothing actually entered for this date yet — don't lock in prepopulated guesses
   const mobPaddocksSnapshot = {}; const mobAreasSnapshot = {}; const mobSessionsSnapshot = {};
-  MAIN_MOBS.forEach(m => {
+  SLOT_MOBS.forEach(m => {
     mobPaddocksSnapshot[m.id] = mobSlotPaddock[m.id].slice(); mobAreasSnapshot[m.id] = mobSlotHa[m.id].slice();
     if(mobSlotPaddock[m.id].some(v => v !== null && v !== undefined) || mobSlotHa[m.id].some(v => v)) mobSessionsSnapshot[m.id] = mobSlotPaddock[m.id].map((_, i) => mobSlotSession[m.id][i] || null);
-  });
-
-  const stripSnapshot = {};
-  ALL_STRIP_MOBS.forEach(m => {
-    const st = stripState[m.id];
-    let closedStay = null;
-    const varEl = document.querySelector(`[data-strip-variance="${m.id}"]`);
-    if(varEl && varEl.style.display === 'block' && st.pendingActual !== null && st.pendingActual !== undefined){
-      const prev = computePrevStripEntry(m.id, key);
-      if(prev){
-        const stay = computeTallyAndCount(m.id, prev.data.paddock, prev.dateKey);
-        closedStay = { paddock: prev.data.paddock, plannedTotalM2: stay.total, actualAreaHa: st.pendingActual, varianceHa: st.pendingActual - (stay.total/10000) };
-      }
-    }
-    stripSnapshot[m.id] = { paddock: st.paddock, plannedArea: st.plannedArea, closedStay };
   });
 
   const skipChecked = document.getElementById('skipCollectionField').checked;
@@ -2770,8 +2670,7 @@ function persistCurrentEntry(){
     mobAreas: mobAreasSnapshot,
     mobPaddocks: mobPaddocksSnapshot,
     mobSessions: Object.keys(mobSessionsSnapshot).length ? mobSessionsSnapshot : undefined,
-    finished: (() => { const used = new Set(); MAIN_MOBS.forEach(m => mobSlotPaddock[m.id].forEach(p => { if(p !== null && p !== undefined) used.add(pk(p)); })); ALL_STRIP_MOBS.forEach(m => { const st = stripState[m.id]; if(st && st.paddock !== null && st.paddock !== undefined) used.add(pk(st.paddock)); }); const f = Array.from(finishedToday).filter(k => used.has(k)); return f.length ? f : undefined; })(),
-    stripGrazers: stripSnapshot,
+    finished: (() => { const used = new Set(); SLOT_MOBS.forEach(m => mobSlotPaddock[m.id].forEach(p => { if(p !== null && p !== undefined) used.add(pk(p)); })); const f = Array.from(finishedToday).filter(k => used.has(k)); return f.length ? f : undefined; })(),
     notes: document.getElementById('notesField').value || ''
   });
   saveEntries(entries);
@@ -2799,12 +2698,9 @@ function scheduleAutosave(){
 ['milkLitres','milkSolidsTotal','sccField','fatField','proField','muField','herd1','herd2','herd3','oadField','penoField','rainfall','tempHigh','tempLow','srpTarget','notesField'].forEach(id => {
   document.getElementById(id).addEventListener('input', scheduleAutosave);
 });
-document.querySelectorAll('[data-strip-area]').forEach(el => el.addEventListener('input', scheduleAutosave));
-document.querySelectorAll('[data-strip-count]').forEach(el => el.addEventListener('input', scheduleAutosave));
 // Immediate autosave for tap/click selections (no need to wait — there's nothing more to type)
 document.getElementById('skipCollectionField').addEventListener('change', touchAndPersist);
 document.querySelectorAll('#windDirGroup .toggle-btn, #windStrGroup .toggle-btn').forEach(btn => btn.addEventListener('click', touchAndPersist));
-document.querySelectorAll('[data-strip-grid] .paddock-btn').forEach(btn => btn.addEventListener('click', touchAndPersist));
 
 
 // ---------- ECOWITT WEATHER STATION ----------
@@ -3251,28 +3147,18 @@ function openModal(key){
   let html = '<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:14px;">';
   rows.forEach(([label,val]) => { html += `<div style="display:flex; justify-content:space-between; font-size:14px; border-bottom:1px solid var(--line); padding-bottom:6px;"><span style="color:var(--ink-soft);">${label}</span><span style="font-family:'IBM Plex Mono',monospace;">${val}</span></div>`; });
   html += '</div>';
-  if(e.mobAreas || e.mobPaddocks){
-    const lines = MAIN_MOBS.map(m => {
-      const pads = normalizeSlotArray(e.mobPaddocks && e.mobPaddocks[m.id]);
-      const has = normalizeSlotArray(e.mobAreas && e.mobAreas[m.id]);
-      const parts = [];
-      pads.forEach((p, s) => { if(p !== null && p !== undefined) parts.push('P' + p + (has[s] ? ' (' + has[s] + 'ha)' : '')); });
-      if(!parts.length) return null;
-      return `<div style="font-size:13px; margin-bottom:4px;"><strong>${m.label}:</strong> ${parts.join(', ')}</div>`;
-    }).filter(Boolean);
-    if(lines.length) html += `<div style="font-size:13px; margin-bottom:12px;"><div style="color:var(--ink-soft); margin-bottom:6px;">Main herd grazing</div>${lines.join('')}</div>`;
-  }
-  if(e.stripGrazers){
-    const lines = ALL_STRIP_MOBS.map(m => {
-      const sg = e.stripGrazers[m.id];
-      if(!sg || (sg.paddock === null && !sg.plannedArea)) return null;
-      let line = `<div style="font-size:13px; margin-bottom:4px;"><strong>${m.label}:</strong> paddock ${sg.paddock ?? '–'}, ${sg.plannedArea ?? 0} m² planned`;
-      if(sg.closedStay) line += ` — closed ${sg.closedStay.paddock}: ${sg.closedStay.plannedTotalM2} m² planned vs ${sg.closedStay.actualAreaHa} ha actual`;
-      line += '</div>';
-      return line;
-    }).filter(Boolean);
-    if(lines.length) html += `<div style="font-size:13px; margin-bottom:12px;"><div style="color:var(--ink-soft); margin-bottom:6px;">Strip grazing</div>${lines.join('')}</div>`;
-  }
+  const slotLine = (m) => {
+    const sl = entryPads(e, m.id); if(!sl.length) return null;
+    const parts = sl.map(x => 'P' + x.p + (x.ha ? ' (' + (isStripMob(m.id) ? Math.round(x.ha * 10000) + ' m²' : x.ha + 'ha') + ')' : '') + (x.sess ? ' ' + x.sess.toUpperCase() : ''));
+    let line = `<div style="font-size:13px; margin-bottom:4px;"><strong>${m.label}:</strong> ${parts.join(', ')}`;
+    const cs = e.stripGrazers && e.stripGrazers[m.id] && e.stripGrazers[m.id].closedStay;
+    if(cs) line += ` — closed ${cs.paddock}: ${cs.plannedTotalM2} m² planned vs ${cs.actualAreaHa} ha actual`;
+    return line + '</div>';
+  };
+  const mainLines = MAIN_MOBS.map(slotLine).filter(Boolean);
+  if(mainLines.length) html += `<div style="font-size:13px; margin-bottom:12px;"><div style="color:var(--ink-soft); margin-bottom:6px;">Main herd grazing</div>${mainLines.join('')}</div>`;
+  const stripLines = ALL_STRIP_MOBS.map(slotLine).filter(Boolean);
+  if(stripLines.length) html += `<div style="font-size:13px; margin-bottom:12px;"><div style="color:var(--ink-soft); margin-bottom:6px;">Strip grazing</div>${stripLines.join('')}</div>`;
   if(e.notes) html += `<div style="font-size:14px; line-height:1.5; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px;">${escapeHtml(e.notes)}</div>`;
   body.innerHTML = html;
   document.getElementById('modalOverlay').classList.add('active');
@@ -3305,6 +3191,25 @@ function latestWalkWith(p, onOrBefore){
   for(const d of dates){ if(onOrBefore && d > onOrBefore) continue; if(walks[d].paddocks[p]) return { date:d, data:walks[d].paddocks[p] }; }
   return null;
 }
+// Cover on a given day: the latest walk reading on or before it, grown forward by the farm-average rate measured
+// between that walk and the one before (capped at 14 days). No growth is added if the paddock was grazed after it was measured.
+let coverCache = { sig:'', idx:null, rates:{} };
+function coverCacheGet(){
+  const sig = entriesStamp + '|' + Object.keys(walks).sort().map(d => d + ':' + (walks[d].importedAt || 0)).join(',');
+  if(coverCache.sig !== sig) coverCache = { sig, idx:buildGrazedIndex(), rates:{} };
+  return coverCache;
+}
+function coverOn(key, dateKey){
+  const w = latestWalkWith(key, dateKey); if(!w) return null;
+  const c = coverCacheGet(), dates = Object.keys(walks).sort(), i = dates.indexOf(w.date), prev = i > 0 ? dates[i - 1] : null;
+  const measured = w.data.measured || w.date;
+  let days = Math.max(0, Math.min(14, daysBetweenKeys(measured, dateKey)));
+  if((c.idx[key] || []).some(d => d >= measured && d < dateKey)) days = 0;
+  let rate = null;
+  if(prev){ const rk = prev + '|' + w.date; if(c.rates[rk] === undefined) c.rates[rk] = walkRatesBetween(prev, w.date, c.idx).avg; rate = c.rates[rk]; }
+  const est = rate !== null && days > 0;
+  return { date:w.date, data:w.data, measuredCover:w.data.cover, cover:Math.max(0, w.data.cover + (est ? rate * days : 0)), est, days, rate };
+}
 function paddockArea(p){
   const w = latestWalkWith(p);
   if(w) return w.data.area;
@@ -3323,8 +3228,7 @@ function buildGrazedIndex(){
   const add = (p, d) => { if(p === null || p === undefined || p === '') return; const k = pk(p); (idx[k] = idx[k] || []); if(idx[k][idx[k].length-1] !== d) idx[k].push(d); };
   Object.keys(entries).sort().forEach(d => {
     const e = entries[d];
-    MAIN_MOBS.forEach(m => normalizeSlotArray(e.mobPaddocks && e.mobPaddocks[m.id]).forEach(v => add(v, d)));
-    ALL_STRIP_MOBS.forEach(m => { const sg = e.stripGrazers && e.stripGrazers[m.id]; if(sg) add(sg.paddock, d); });
+    SLOT_MOBS.forEach(m => entrySlots(e, m.id).forEach(x => add(x.p, d)));
   });
   return idx;
 }
@@ -3383,30 +3287,24 @@ function walkAvgCover(w, onDate){
 
 // ---------- LAST 7 DAYS GRAZING SUMMARY (Pasture tab) ----------
 function grazeWeekCell(e, mob){
-  if(!e) return '<span style="color:var(--line);">–</span>';
-  if(mob.strip){
-    const sg = e.stripGrazers && e.stripGrazers[mob.id];
-    const cnt = e[mob.countKey];
-    if(!sg || sg.paddock === null || sg.paddock === undefined) return '<span style="color:var(--line);">–</span>';
-    return '<div><b>P' + escapeHtml(String(sg.paddock)) + '</b></div>' + (sg.plannedArea ? '<div>' + Math.round(sg.plannedArea).toLocaleString() + ' m²</div>' : '') + (cnt ? '<div style="color:var(--ink-soft);">' + Math.round(cnt) + ' cows</div>' : '');
-  }
-  const pads = (e.mobPaddocks && e.mobPaddocks[mob.id]) || [], has = (e.mobAreas && e.mobAreas[mob.id]) || [], ses = (e.mobSessions && e.mobSessions[mob.id]) || [];
-  const idx = pads.map((_, i) => i).filter(i => pads[i] !== null && pads[i] !== undefined);
-  if(!idx.length) return '<span style="color:var(--line);">–</span>';
-  const grp = (label, list) => list.map((i, n) => '<div style="display:flex; gap:4px;"><b style="min-width:20px;">' + (n === 0 ? label : '') + '</b><span>P' + escapeHtml(String(pads[i])) + (has[i] ? ' · ' + has[i] : '') + '</span></div>').join('');
-  const am = idx.filter(i => ses[i] === 'am'), pm = idx.filter(i => ses[i] === 'pm'), other = idx.filter(i => ses[i] !== 'am' && ses[i] !== 'pm');
+  const dash = '<span style="color:var(--line);">–</span>';
+  if(!e) return dash;
+  const sl = entryPads(e, mob.id);
+  if(!sl.length) return dash;
+  const area = ha => ha ? (mob.strip ? Math.round(ha * 10000).toLocaleString() + ' m²' : ha) : '';
+  const grp = (label, list) => list.map((x, n) => '<div style="display:flex; gap:4px;"><b style="min-width:20px;">' + (n === 0 ? label : '') + '</b><span>P' + escapeHtml(String(x.p)) + (x.ha ? ' · ' + area(x.ha) : '') + '</span></div>').join('');
+  const am = sl.filter(x => x.sess === 'am'), pm = sl.filter(x => x.sess === 'pm'), other = sl.filter(x => x.sess !== 'am' && x.sess !== 'pm');
   let h = '';
   if(other.length) h += grp('', other);
   if(am.length) h += grp('AM', am);
   if(pm.length) h += grp('PM', pm);
-  const cows = e[mob.id];
+  const cows = e[mob.countKey || mob.id];
   if(cows) h += '<div style="color:var(--ink-soft); margin-top:1px;">' + Math.round(cows) + ' cows</div>';
   return h;
 }
 function grazeWeekTotalHa(e){
   if(!e) return null; let t = 0, any = false;
-  MAIN_MOBS.forEach(m => { const pads = (e.mobPaddocks && e.mobPaddocks[m.id]) || [], has = (e.mobAreas && e.mobAreas[m.id]) || []; pads.forEach((p, i) => { if(p !== null && p !== undefined && has[i]){ t += has[i]; any = true; } }); });
-  ALL_STRIP_MOBS.forEach(m => { const sg = e.stripGrazers && e.stripGrazers[m.id]; if(sg && sg.plannedArea){ t += sg.plannedArea / 10000; any = true; } });
+  SLOT_MOBS.forEach(m => entryPads(e, m.id).forEach(x => { if(x.ha){ t += x.ha; any = true; } }));
   return any ? t : null;
 }
 function renderGrazeWeek(){
@@ -3418,7 +3316,7 @@ function renderGrazeWeek(){
     { id:'oad', label:'Once a day', strip:true, countKey:'oad' }, { id:'peno', label:'Peno', strip:true, countKey:'peno' }
   ];
   if(typeof herd !== 'undefined' && herd.calving){ mobs.push({ id:'newMoms', label:'New moms', strip:true, countKey:'newMomsCount' }, { id:'colostrum', label:'Colostrum', strip:true, countKey:'colostrumCount' }); }
-  const hasData = m => days.some(d => { const e = entries[d]; if(!e) return false; if(m.strip){ const sg = e.stripGrazers && e.stripGrazers[m.id]; return sg && sg.paddock !== null && sg.paddock !== undefined; } return ((e.mobPaddocks && e.mobPaddocks[m.id]) || []).some(p => p !== null && p !== undefined); });
+  const hasData = m => days.some(d => entryPads(entries[d], m.id).length > 0);
   const rows = mobs.filter(m => m.always || hasData(m));
   const th = 'padding:6px 8px; font-size:11px; font-weight:600; text-align:left; border-bottom:2px solid var(--line); background:#fff; white-space:nowrap;';
   const dayHead = d => { const [y, mo, da] = d.split('-').map(Number), dt = new Date(y, mo - 1, da); return '<th style="' + th + ' min-width:92px;">' + (d === today ? '<span style="color:var(--green);">Today</span>' : dt.toLocaleDateString('en-GB', { weekday:'short' })) + '<div style="font-weight:400; color:var(--ink-soft);">' + dt.toLocaleDateString('en-GB', { day:'numeric', month:'short' }) + '</div></th>'; };
@@ -3651,13 +3549,13 @@ document.getElementById('walkImportBtn').addEventListener('click', () => {
 function renderBreakSettings(){
   const bd = document.getElementById('breakDate'); if(!bd.value) bd.value = todayKeyReal();
   const d = bd.value, grid = document.getElementById('breakGrid');
-  grid.innerHTML = MAIN_MOBS.map(m => `<div class="field-row"><div class="field"><label>${m.label} AM</label><input type="number" step="0.1" inputmode="decimal" data-break="${m.id}-am"></div><div class="field"><label>${m.label} PM</label><input type="number" step="0.1" inputmode="decimal" data-break="${m.id}-pm"></div></div>`).join('');
+  grid.innerHTML = SLOT_MOBS.map(m => { const u = isStripMob(m.id) ? ' (m²)' : '', st = isStripMob(m.id) ? '1' : '0.1', im = isStripMob(m.id) ? 'numeric' : 'decimal'; return `<div class="field-row"><div class="field"><label>${m.label} ${isStripMob(m.id) ? 'once a day' : 'AM'}${u}</label><input type="number" step="${st}" inputmode="${im}" data-break="${m.id}-am"></div>${isStripMob(m.id) ? '<div class="field"></div>' : `<div class="field"><label>${m.label} PM${u}</label><input type="number" step="${st}" inputmode="${im}" data-break="${m.id}-pm"></div>`}</div>`; }).join('');
   grid.querySelectorAll('[data-break]').forEach(inp => {
     const [mob, sess] = inp.dataset.break.split('-');
     const eff = breakTargetOn(mob, sess, d);
-    inp.value = eff ? eff.ha : '';
+    inp.value = eff ? haToInput(mob, eff.ha) : '';
     inp.addEventListener('change', () => {
-      const v = inp.value === '' ? null : parseFloat(inp.value);
+      const v = inp.value === '' ? null : (isStripMob(mob) ? Math.round(parseFloat(inp.value)) / 10000 : parseFloat(inp.value));
       const exact = breakTargets.findIndex(b => b.mob === mob && b.session === sess && b.from === d);
       if(v === null || isNaN(v)){ if(exact >= 0) breakTargets.splice(exact, 1); }
       else if(exact >= 0) breakTargets[exact].ha = v;
@@ -3666,8 +3564,8 @@ function renderBreakSettings(){
     });
   });
   document.getElementById('breakList').innerHTML = breakTargets.slice().sort((a, b) => b.from.localeCompare(a.from) || a.mob.localeCompare(b.mob)).map(b => {
-    const i = breakTargets.indexOf(b), lab = (MAIN_MOBS.find(m => m.id === b.mob) || { label:b.mob }).label;
-    return `<div class="excl-item"><span>${escapeHtml(lab)} ${b.session.toUpperCase()} · ${b.ha} ha from ${fmtShort(b.from)}</span><button data-break-del="${i}" title="Remove">✕</button></div>`;
+    const i = breakTargets.indexOf(b), lab = slotMobLabel(b.mob);
+    return `<div class="excl-item"><span>${escapeHtml(lab)} ${b.session.toUpperCase()} · ${isStripMob(b.mob) ? Math.round(b.ha * 10000).toLocaleString() + ' m²' : b.ha + ' ha'} from ${fmtShort(b.from)}</span><button data-break-del="${i}" title="Remove">✕</button></div>`;
   }).join('');
   document.querySelectorAll('[data-break-del]').forEach(btn => btn.addEventListener('click', () => { breakTargets.splice(parseInt(btn.dataset.breakDel, 10), 1); saveBreaks(); renderBreakSettings(); updateAllBreakInfo(); }));
 }
@@ -3739,23 +3637,21 @@ function feedOfferedHtml(){
     let ha = 0, kg = 0, used = [];
     slots.forEach(s => {
       if(!s.p || !s.ha) return;
-      const w = latestWalkWith(pk(s.p), d);
+      const w = coverOn(pk(s.p), d);
       ha += s.ha;
       if(!w){ missing = true; used.push(`${s.p}: no walk`); return; }
-      const av = Math.max(0, w.data.cover - post);
-      kg += s.ha * av; used.push(`${s.p}: ${Math.round(w.data.cover)} (${fmtShort(w.date)})`);
+      const av = Math.max(0, w.cover - post);
+      kg += s.ha * av; used.push(w.est ? `${s.p}: ${Math.round(w.cover)} est. (${Math.round(w.measuredCover)} on ${fmtShort(w.date)})` : `${s.p}: ${Math.round(w.cover)} (${fmtShort(w.date)})`);
     });
     if(!ha) return;
     let perCow = cows > 0 ? (kg / cows).toFixed(1) + ' kg DM/cow' : 'no cow count';
     if(cows > 0 && mobId){ const sp = suppDmPerCow(mobId, eff, extrasNow); if(sp.total > 0) perCow += ` + ${sp.total.toFixed(1)} supplement = ${((kg / cows) + sp.total).toFixed(1)} kg DM/cow total`; }
     lines.push(`<div style="padding:7px 0; border-bottom:1px solid var(--line);"><div><strong>${label}</strong> · ${cows || '–'} cows · ${ha.toFixed(2)} ha → <strong>${perCow}</strong></div><div style="font-size:11px; color:var(--ink-soft); font-family:'IBM Plex Mono',monospace;">${Math.round(kg).toLocaleString()} kg DM offered · cover ${used.join(', ')}</div></div>`);
   };
-  MAIN_MOBS.forEach(m => {
+  SLOT_MOBS.forEach(m => {
     const slots = mobSlotPaddock[m.id].map((p, i) => ({ p, ha: mobSlotHa[m.id][i] }));
-    calc(m.label, num(m.id), slots, m.id);
+    calc(m.label, mobCountValue(m.id), slots, m.id);
   });
-  const stripCows = { peno: num('penoField'), oad: num('oadField'), newMoms: stripState.newMoms.count || 0, colostrum: stripState.colostrum.count || 0 };
-  ALL_STRIP_MOBS.forEach(m => calc(m.label, stripCows[m.id], [{ p: stripState[m.id].paddock, ha: (stripState[m.id].plannedArea || 0) / 10000 }], m.id));
   if(!Object.keys(walks).length) return '<div style="color:var(--ink-soft);">Import a pasture walk (Walk tab) to see this.</div>';
   if(!lines.length) return '<div style="color:var(--ink-soft);">Enter paddocks and areas above to see feed on offer.</div>';
   return lines.join('') + (missing ? '<div style="font-size:11px; color:var(--rust); margin-top:6px;">Some paddocks have no walk reading on or before this date and are counted as zero feed.</div>' : '');
@@ -4081,18 +3977,16 @@ function dayFeed(k){
     let any = false;
     slots.forEach(s => {
       if(!s.p || !s.ha) return; any = true;
-      const w = latestWalkWith(pk(s.p), k);
+      const w = coverOn(pk(s.p), k);
       if(!w){ noWalk = true; return; }
-      pasture += s.ha * Math.max(0, w.data.cover - post);
+      pasture += s.ha * Math.max(0, w.cover - post);
     });
     if(!any) noArea = true;
   };
   MAIN_MOBS.forEach(m => {
-    const ps = normalizeSlotArray(e.mobPaddocks && e.mobPaddocks[m.id]), hs = normalizeSlotArray(e.mobAreas && e.mobAreas[m.id]);
-    addMob(m.id, e[m.id], ps.map((p, i) => ({ p, ha: hs[i] })));
+    addMob(m.id, e[m.id], entrySlots(e, m.id).map(x => ({ p:x.p, ha:x.ha })));
   });
-  const stripCount = { peno: e.peno, oad: e.oad, newMoms: e.newMomsCount, colostrum: e.colostrumCount };
-  ALL_STRIP_MOBS.forEach(m => { const sg = e.stripGrazers && e.stripGrazers[m.id]; addMob(m.id, stripCount[m.id], sg ? [{ p: sg.paddock, ha: (sg.plannedArea || 0) / 10000 }] : []); });
+  ALL_STRIP_MOBS.forEach(m => addMob(m.id, entryCount(e, m.id), entrySlots(e, m.id).map(x => ({ p:x.p, ha:x.ha }))));
   if(cows <= 0) return null;
   return { cows, pastureKg: pasture, suppKg: supp, past: pasture / cows, sup: supp / cows, noWalk, noArea };
 }
@@ -4147,12 +4041,8 @@ function grazingHistoryForPaddock(p){
   const hits = [];
   Object.keys(entries).sort().forEach(k => {
     const e = entries[k]; const mobs = [];
-    MAIN_MOBS.forEach(m => {
-      if(normalizeSlotArray(e.mobPaddocks && e.mobPaddocks[m.id]).some(v => v !== null && v !== undefined && String(v) === target)) mobs.push(m.label);
-    });
-    ALL_STRIP_MOBS.forEach(m => {
-      const sg = e.stripGrazers && e.stripGrazers[m.id];
-      if(sg && sg.paddock !== null && sg.paddock !== undefined && String(sg.paddock) === target) mobs.push(m.label);
+    SLOT_MOBS.forEach(m => {
+      if(entryPads(e, m.id).some(x => String(x.p) === target)) mobs.push(m.label);
     });
     if(mobs.length) hits.push({ date:k, mobs });
   });
@@ -4222,8 +4112,7 @@ function askVisits(dates){ const d = dates.slice().sort(); const v = []; d.forEa
 function askGrazeMap(startKey){
   const map = {}; const add = (p, label, d) => { if(p === null || p === undefined || p === '') return; const k = pk(p); ((map[k] = map[k] || {})[label] = map[k][label] || []).push(d); };
   Object.keys(entries).sort().forEach(d => { if(d < startKey) return; const e = entries[d];
-    MAIN_MOBS.forEach(m => { const seen = new Set(); normalizeSlotArray(e.mobPaddocks && e.mobPaddocks[m.id]).forEach(v => { if(v !== null && v !== undefined && !seen.has(String(v))){ seen.add(String(v)); add(v, m.label, d); } }); });
-    ALL_STRIP_MOBS.forEach(m => { const sg = e.stripGrazers && e.stripGrazers[m.id]; if(sg) add(sg.paddock, m.label, d); });
+    SLOT_MOBS.forEach(m => { const seen = new Set(); entryPads(e, m.id).forEach(x => { if(!seen.has(String(x.p))){ seen.add(String(x.p)); add(x.p, m.label, d); } }); });
   });
   return map;
 }
@@ -4341,7 +4230,7 @@ document.getElementById('exportBtn').addEventListener('click', () => {
   if(exportDataset === 'grazing' || exportDataset === 'all'){
     payload.grazing = Object.keys(entries).filter(inRange).sort().map(k => {
       const e = entries[k];
-      return { date:k, mobAreas:e.mobAreas, mobPaddocks:e.mobPaddocks, stripGrazers:e.stripGrazers };
+      return { date:k, mobAreas:e.mobAreas, mobPaddocks:e.mobPaddocks, mobSessions:e.mobSessions, stripGrazers:e.stripGrazers };
     });
   }
   if(exportDataset === 'all'){
@@ -4372,10 +4261,7 @@ function mobAreaSummary(e, mobId){
   return parts.join(', ');
 }
 function stripSummary(e, mobId){
-  const sg = e.stripGrazers && e.stripGrazers[mobId];
-  if(!sg || !sg.paddock) return '';
-  const ha = sg.plannedArea ? (sg.plannedArea/10000).toFixed(2) + 'ha' : '';
-  return ha ? `${sg.paddock} (${ha})` : `${sg.paddock}`;
+  return entryPads(e, mobId).map(x => x.ha ? `${x.p} (${x.ha.toFixed(2)}ha)` : `${x.p}`).join(', ');
 }
 document.getElementById('excelExportBtn').addEventListener('click', () => {
   const from = document.getElementById('exportFrom').value;
