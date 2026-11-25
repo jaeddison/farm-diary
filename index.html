@@ -531,10 +531,10 @@
 
   <div class="view" id="walkView">
     <div class="card" data-card="grazeweek">
-      <div class="card-head"><span class="dot a"></span><h2>Last 7 days grazing</h2><span class="chevron">▾</span></div>
+      <div class="card-head"><span class="dot a"></span><h2>Grazing: last 7 days and plan</h2><span class="chevron">▾</span></div>
       <div class="card-body">
         <div id="grazeWeekRoot"></div>
-        <div style="font-size:11px; color:var(--ink-soft); margin-top:8px;">Paddock and area (ha) for each break, AM then PM, with cows. Peno, OAD, New moms and Colostrum work the same way, with area in m². Swipe sideways for earlier days.</div>
+        <div style="font-size:11px; color:var(--ink-soft); margin-top:8px;">Oldest on the left, newest on the right, like the whiteboard (heavy line = Monday). Each break shows paddock · area · cover, with cows underneath. Cover is kg DM/ha for that day: ~ means estimated from the latest walk. ✓ marks a paddock finished that day (marked by hand, or fully grazed by area), and the Finished row lists them. Peno, OAD, New moms and Colostrum are fed once a day, area in m². Swipe left for the past week; planned days show to the right as far ahead as you've entered them (up to a week).</div>
       </div>
     </div>
     <div class="field" id="walkSelectWrap" style="margin-bottom:12px; display:none;"><label>Walk</label><select id="walkSelect" style="width:100%; padding:10px; border:1px solid var(--line); border-radius:8px; background:#fff; font-size:15px;"></select></div>
@@ -3157,6 +3157,8 @@ function openModal(key){
   };
   const mainLines = MAIN_MOBS.map(slotLine).filter(Boolean);
   if(mainLines.length) html += `<div style="font-size:13px; margin-bottom:12px;"><div style="color:var(--ink-soft); margin-bottom:6px;">Main herd grazing</div>${mainLines.join('')}</div>`;
+  const finLabels = finishedLabelsOn(key);
+  if(finLabels.length) html += `<div style="font-size:13px; margin-bottom:12px;"><span style="color:var(--ink-soft);">Finished:</span> ${finLabels.map(x => escapeHtml(String(x))).join(', ')} ✓</div>`;
   const stripLines = ALL_STRIP_MOBS.map(slotLine).filter(Boolean);
   if(stripLines.length) html += `<div style="font-size:13px; margin-bottom:12px;"><div style="color:var(--ink-soft); margin-bottom:6px;">Strip grazing</div>${stripLines.join('')}</div>`;
   if(e.notes) html += `<div style="font-size:14px; line-height:1.5; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px;">${escapeHtml(e.notes)}</div>`;
@@ -3286,13 +3288,24 @@ function walkAvgCover(w, onDate){
 // --- Walk tab ---
 
 // ---------- LAST 7 DAYS GRAZING SUMMARY (Pasture tab) ----------
-function grazeWeekCell(e, mob){
+// A paddock is finished on a day when it was marked finished by hand, or its running total reached the paddock size.
+function paddockFinishedOn(key, d){ const u = usedBefore(key, keyOffsetFrom(d, 1)); return u.completedOn === d; }
+function finishedLabelsOn(d){
+  const e = entries[d]; if(!e) return [];
+  const byKey = {}; PADDOCKS.forEach(p => { byKey[pk(p)] = p; });
+  const keys = new Set(); SLOT_MOBS.forEach(m => entryPads(e, m.id).forEach(x => keys.add(pk(x.p))));
+  (Array.isArray(e.finished) ? e.finished : []).forEach(k => keys.add(pk(k)));
+  return Array.from(keys).filter(k => paddockFinishedOn(k, d)).map(k => byKey[k] !== undefined ? byKey[k] : k)
+    .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric:true }));
+}
+function grazeWeekCell(e, mob, d){
   const dash = '<span style="color:var(--line);">–</span>';
   if(!e) return dash;
   const sl = entryPads(e, mob.id);
   if(!sl.length) return dash;
-  const area = ha => ha ? (mob.strip ? Math.round(ha * 10000).toLocaleString() + ' m²' : ha) : '';
-  const grp = (label, list) => list.map((x, n) => '<div style="display:flex; gap:4px;"><b style="min-width:20px;">' + (n === 0 ? label : '') + '</b><span>P' + escapeHtml(String(x.p)) + (x.ha ? ' · ' + area(x.ha) : '') + '</span></div>').join('');
+  const area = ha => ha ? (mob.strip ? Math.round(ha * 10000).toLocaleString() + ' m²' : ha + ' ha') : '';
+  const cov = x => { const c = d ? coverOn(pk(x.p), d) : null; return (c ? ' · <b style="color:var(--green);">' + (c.est ? '~' : '') + Math.round(c.cover) + '</b>' : '') + (d && paddockFinishedOn(pk(x.p), d) ? ' <b style="color:var(--green);" title="Finished">✓</b>' : ''); };
+  const grp = (label, list) => list.map((x, n) => '<div style="display:flex; gap:4px;"><b style="min-width:20px;">' + (n === 0 ? label : '') + '</b><span>P' + escapeHtml(String(x.p)) + (x.ha ? ' · ' + area(x.ha) : '') + cov(x) + '</span></div>').join('');
   const am = sl.filter(x => x.sess === 'am'), pm = sl.filter(x => x.sess === 'pm'), other = sl.filter(x => x.sess !== 'am' && x.sess !== 'pm');
   let h = '';
   if(other.length) h += grp('', other);
@@ -3310,7 +3323,9 @@ function grazeWeekTotalHa(e){
 function renderGrazeWeek(){
   const root = document.getElementById('grazeWeekRoot'); if(!root) return;
   const today = todayKeyReal(), days = [];
-  for(let i = 0; i < 7; i++) days.push(keyOffsetFrom(today, -i));
+  // a week back to as far ahead as has been planned (up to a week), oldest on the left like the whiteboard
+  let ahead = 0; for(let k = 7; k >= 1; k--){ if(grazeWeekTotalHa(entries[keyOffsetFrom(today, k)]) !== null){ ahead = k; break; } }
+  for(let i = -7; i <= ahead; i++) days.push(keyOffsetFrom(today, i));
   const mobs = [
     { id:'herd1', label:'Herd 1', always:true }, { id:'herd2', label:'Herd 2', always:true }, { id:'herd3', label:'Herd 3 (Staph)' },
     { id:'oad', label:'Once a day', strip:true, countKey:'oad' }, { id:'peno', label:'Peno', strip:true, countKey:'peno' }
@@ -3319,15 +3334,21 @@ function renderGrazeWeek(){
   const hasData = m => days.some(d => entryPads(entries[d], m.id).length > 0);
   const rows = mobs.filter(m => m.always || hasData(m));
   const th = 'padding:6px 8px; font-size:11px; font-weight:600; text-align:left; border-bottom:2px solid var(--line); background:#fff; white-space:nowrap;';
-  const dayHead = d => { const [y, mo, da] = d.split('-').map(Number), dt = new Date(y, mo - 1, da); return '<th style="' + th + ' min-width:92px;">' + (d === today ? '<span style="color:var(--green);">Today</span>' : dt.toLocaleDateString('en-GB', { weekday:'short' })) + '<div style="font-weight:400; color:var(--ink-soft);">' + dt.toLocaleDateString('en-GB', { day:'numeric', month:'short' }) + '</div></th>'; };
+  const dayHead = d => { const [y, mo, da] = d.split('-').map(Number), dt = new Date(y, mo - 1, da); return '<th' + (d === today ? ' id="gwToday"' : '') + ' style="' + th + ' min-width:104px;' + (dt.getDay() === 1 ? ' border-left:2px solid var(--ink-soft);' : '') + (d === today ? ' background:#e6efe0;' : '') + '">' + (d === today ? '<span style="color:var(--green);">Today · ' + dt.toLocaleDateString('en-GB', { weekday:'short' }) + '</span>' : dt.toLocaleDateString('en-GB', { weekday:'short' })) + '<div style="font-weight:400; color:var(--ink-soft);">' + dt.toLocaleDateString('en-GB', { day:'numeric', month:'short' }) + '</div></th>'; };
   const stick = 'position:sticky; left:0; z-index:1; background:#fff; border-right:1px solid var(--line);';
-  let h = '<div style="overflow-x:auto; -webkit-overflow-scrolling:touch; border:1px solid var(--line); border-radius:8px;"><table style="border-collapse:collapse; width:max-content; min-width:100%; font-family:\'IBM Plex Mono\',monospace; font-size:11px;"><thead><tr><th style="' + th + stick + ' z-index:2;"></th>' + days.map(dayHead).join('') + '</tr></thead><tbody>';
+  const dayTd = d => (d === today ? ' background:#f1f6ed;' : '') + (new Date(d + 'T12:00:00').getDay() === 1 ? ' border-left:2px solid var(--ink-soft);' : '');
+  let h = '<div id="gwScroll" style="overflow-x:auto; -webkit-overflow-scrolling:touch; border:1px solid var(--line); border-radius:8px;"><table style="border-collapse:collapse; width:max-content; min-width:100%; font-family:\'IBM Plex Mono\',monospace; font-size:11px;"><thead><tr><th style="' + th + stick + ' z-index:2;"></th>' + days.map(dayHead).join('') + '</tr></thead><tbody>';
   rows.forEach(m => {
-    h += '<tr><th style="padding:8px; font-size:11px; text-align:left; vertical-align:top; border-bottom:1px solid var(--line); white-space:nowrap; ' + stick + '">' + m.label + '</th>' + days.map(d => '<td style="padding:6px 8px; vertical-align:top; border-bottom:1px solid var(--line); line-height:1.35;">' + grazeWeekCell(entries[d], m) + '</td>').join('') + '</tr>';
+    h += '<tr><th style="padding:8px; font-size:11px; text-align:left; vertical-align:top; border-bottom:1px solid var(--line); white-space:nowrap; ' + stick + '">' + m.label + '</th>' + days.map(d => '<td style="padding:6px 8px; vertical-align:top; border-bottom:1px solid var(--line); line-height:1.35;' + dayTd(d) + '">' + grazeWeekCell(entries[d], m, d) + '</td>').join('') + '</tr>';
   });
-  h += '<tr><th style="padding:8px; font-size:11px; text-align:left; ' + stick + '">Total ha</th>' + days.map(d => { const t = grazeWeekTotalHa(entries[d]); return '<td style="padding:6px 8px; font-weight:700; color:var(--green);">' + (t === null ? '<span style="color:var(--line); font-weight:400;">–</span>' : (Math.round(t * 10) / 10)) + '</td>'; }).join('') + '</tr>';
+  h += '<tr><th style="padding:8px; font-size:11px; text-align:left; vertical-align:top; border-bottom:1px solid var(--line); ' + stick + '">Finished ✓</th>' + days.map(d => { const f = finishedLabelsOn(d); return '<td style="padding:6px 8px; vertical-align:top; border-bottom:1px solid var(--line); line-height:1.35;' + dayTd(d) + '">' + (f.length ? '<b style="color:var(--green);">' + f.length + '</b> · ' + f.map(x => escapeHtml(String(x))).join(', ') : '<span style="color:var(--line);">–</span>') + '</td>'; }).join('') + '</tr>';
+  h += '<tr><th style="padding:8px; font-size:11px; text-align:left; ' + stick + '">Total ha</th>' + days.map(d => { const t = grazeWeekTotalHa(entries[d]); return '<td style="padding:6px 8px; font-weight:700; color:var(--green);' + dayTd(d) + '">' + (t === null ? '<span style="color:var(--line); font-weight:400;">–</span>' : (Math.round(t * 10) / 10)) + '</td>'; }).join('') + '</tr>';
   h += '</tbody></table></div>';
   root.innerHTML = h;
+  // open with today's column just right of the herd names; earlier days are a swipe to the left, plans to the right
+  const sc = document.getElementById('gwScroll'), tdEl = document.getElementById('gwToday');
+  const align = () => { if(sc && tdEl && tdEl.offsetLeft) sc.scrollLeft = Math.max(0, tdEl.offsetLeft - (sc.querySelector('thead th').offsetWidth || 70)); };
+  align(); requestAnimationFrame(align);
 }
 
 // ---------- FORECAST ACCURACY CHECK (read-only) ----------
